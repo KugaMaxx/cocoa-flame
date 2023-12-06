@@ -374,7 +374,7 @@ class Decoder(nn.Module):
 
 
 class PointMLP(nn.Module):
-    def __init__(self, class_num=50, embed_dim=64, gmp_dim=64, cls_dim=64, use_xyz=True,
+    def __init__(self, class_num=2, embed_dim=64, gmp_dim=64, use_xyz=True,
                  groups=1, res_expansion=1.0, bias=True, activation="relu", 
                  sample_nums=[512, 128, 32, 8], neighbor_nums=[32, 32, 32, 32], normalize="anchor",
                  en_dims=[128, 256, 512, 1024], de_dims=[512, 256, 128, 128], 
@@ -428,27 +428,21 @@ class PointMLP(nn.Module):
             # update channels
             last_channel = out_channel
 
-        # Class label mapping
-        self.cls_map = nn.Sequential(
-            ConvBNReLU1D(16, cls_dim, bias=bias, activation=activation),
-            ConvBNReLU1D(cls_dim, cls_dim, bias=bias, activation=activation)
-        )
-
         # Global max pooling mapping
         self.gmp_map_list = nn.ModuleList()
         for en_dim in en_dims:
             self.gmp_map_list.append(ConvBNReLU1D(en_dim, gmp_dim, bias=bias, activation=activation))
         self.gmp_map_end = ConvBNReLU1D(gmp_dim*len(en_dims), gmp_dim, bias=bias, activation=activation)
 
-        # Classifier
-        self.classifier = nn.Sequential(
-            nn.Conv1d(gmp_dim + cls_dim + de_dims[-1], 128, 1, bias=bias),
+        # 
+        self.detector = nn.Sequential(
+            nn.Conv1d(gmp_dim + de_dims[-1], 128, kernel_size=1, bias=bias),
             nn.BatchNorm1d(128),
             nn.Dropout(),
-            nn.Conv1d(128, class_num, 1, bias=bias)
+            nn.Conv1d(128, 4 + 1 + class_num, kernel_size=1, bias=bias)
         )
 
-    def forward(self, x, norm_plt, cls_label):
+    def forward(self, x, norm_plt):
         """
         :param x: [batch, 3, point]
         """
@@ -479,33 +473,34 @@ class PointMLP(nn.Module):
         # Require the global context
         gmp_list = []
         for i in range(len(x_list)):
-            gmp_list.append(F.adaptive_max_pool1d(self.gmp_map_list[i](x_list[i]), 1))
-        global_context = self.gmp_map_end(torch.cat(gmp_list, dim=1)) # [b, gmp_dim, 1]
+            print(self.gmp_map_list[i](x_list[i]).shape)
+            gmp_list.append(F.adaptive_max_pool1d(self.gmp_map_list[i](x_list[i]), 1))  # [batch, gmp_dim, 1]
+        global_context = self.gmp_map_end(torch.cat(gmp_list, dim=1)) # [batch, gmp_dim * len(x_list), 1] -> [batch, gmp_dim, 1]
 
-        # Here is the cls_token
-        cls_token = self.cls_map(cls_label.unsqueeze(dim=-1))  # [b, cls_dim, 1]
-        x = torch.cat([x, global_context.repeat([1, 1, x.shape[-1]]), cls_token.repeat([1, 1, x.shape[-1]])], dim=1)
-        x = self.classifier(x)
-        x = F.log_softmax(x, dim=1)
-        x = x.permute(0, 2, 1)
+        # Concatenate global context behind output
+        x = torch.cat([x, global_context.repeat([1, 1, x.shape[-1]])], dim=1)
+
+        # 置信度和类别都用sigmoid输出
+        x = self.detector(x)
+        prediction = x.permute(0, 2, 1)
+
+        pred_x = prediction[..., 0]
+        pred_y = prediction[..., 1]
+        pred_w = prediction[..., 2]
+        pred_h = prediction[..., 3]
+        pred_conf = torch.sigmoid(prediction[..., 4])
+        pred_cls = torch.sigmoid(prediction[..., 5:])
         
         return x
 
-
-def pointMLP(class_num=50, **kwargs) -> PointMLP:
-    return PointMLP(class_num=class_num, embed_dim=64, gmp_dim=64, cls_dim=64, use_xyz=True,
-                    groups=1, res_expansion=1.0, bias=True, activation="relu", 
-                    sample_nums=[512, 128, 32, 8], neighbor_nums=[32, 32, 32, 32], normalize="anchor",
-                    en_dims=[128, 256, 512, 1024], de_dims=[512, 256, 128, 128],
-                    pre_blocks=[2, 2, 2, 2], pos_blocks=[2, 2, 2, 2], de_blocks=[4, 4, 4, 4], **kwargs)
+# 难点1：要设计一个效率高的网络
+# 难点2：点云网络没有检测类的网络
 
 
 if __name__ == '__main__':
     torch.manual_seed(0)
     data = torch.rand(2, 3, 2048).to('cuda')
     norm = torch.rand(2, 3, 2048).to('cuda')
-    cls_label = torch.rand([2, 16]).to('cuda')
     print("===> testing modelD ...")
-    model = pointMLP(50).to('cuda')
-    out = model(data, norm, cls_label)  # [2,2048,50]
-    print(out)
+    model = PointMLP().to('cuda')
+    out = model(data, norm)  # [2,2048,50]
