@@ -28,3 +28,8 @@ def Criterions(name: str, **kwargs):
     assert name in models.keys()
 
     return models[name](**kwargs)
+
+
+def build_model(args):
+    model = None
+    return model
