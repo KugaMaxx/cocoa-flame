@@ -3,8 +3,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from pointnet2_ops import pointnet2_utils
-from common import MLP, ResidualBlock, LocalGrouper
-from common import get_activation, get_points_by_index
+from scipy.optimize import linear_sum_assignment
+
+from models.common import MLP, ResidualBlock, LocalGrouper
+from models.common import get_activation, get_points_by_index
+from utils.boxes import generalized_box_iou, box_cxcywh_to_xyxy
 
 
 class ExtractionBlock(nn.Module):
@@ -82,7 +85,7 @@ class ExtractionBlock(nn.Module):
 
 class PointMLP(nn.Module):
     def __init__(self, encrypt_dim=64, dim_expansion=2, encrypt_pts=1024, pts_reducer=2, 
-                 num_layers=4, num_classes=4, num_queries=100, **kwargs):
+                 num_layers=4, num_classes=2, **kwargs):
         super().__init__()
         self.encrypt_dim = encrypt_dim
         self.encrypt_pts = encrypt_pts
@@ -110,9 +113,9 @@ class PointMLP(nn.Module):
 
             last_channels = out_channels
             last_samplers = num_samples
-
+        
+        # TODO 如果精度不高，可以试试对 last_channels 降维，num_samples 升维，结合 detr 和 pointMLP 的 decoder 部分
         # classification embedding
-        # self.class_embed = nn.Linear(last_channels, num_classes + 1)
         self.class_embed = MLP(last_channels, last_channels, num_classes + 1, num_layers=3)
 
         # bounding box embedding
@@ -136,7 +139,81 @@ class PointMLP(nn.Module):
         outputs_class = F.softmax(self.class_embed(feat), dim=2)
         outputs_coord = self.bbox_embed(feat).sigmoid()
 
-        return {'pred_logits': outputs_class, 'pred_boxes': outputs_coord}
+        return {'logits': outputs_class, 'boxes': outputs_coord}
+
+
+class DETRLoss(nn.Module):
+    def __init__(self, weight_dict, coef_class=1.0, coef_bbox=1.0, coef_giou=1.0, num_classes=2, eos_coef=0.1):
+        super().__init__()
+        self.coef_class = coef_class
+        self.coef_bbox  = coef_bbox
+        self.coef_giou  = coef_giou
+
+        empty_weight = torch.ones(self.num_classes + 1)
+        empty_weight[-1] = eos_coef
+        self.register_buffer('empty_weight', empty_weight)
+
+    def forward(self, outputs, targets):
+        # run Hungarian matcher
+        indices   = self._hungarian_matcher(outputs, targets)
+        batch_idx = torch.cat([torch.full([len(tgt)], i) for i, (out, tgt) in enumerate(indices)])
+        out_idx   = torch.cat([torch.tensor(out) for (out, _) in indices])
+        tgt_idx   = torch.cat([torch.tensor(tgt) for (_, tgt) in indices])
+
+        # calculate classification loss
+        out_logits = outputs['pred_logits']
+        tgt_labels = torch.full(out_logits.shape[:2], self.num_classes, dtype=torch.int64)
+        tgt_labels[batch_idx, out_idx] = torch.cat([tgt['labels'][i] for tgt, (_, i) in zip(targets, indices)], dim=0)
+        loss_class = F.cross_entropy(out_logits.transpose(1, 2), tgt_labels, self.empty_weight)
+        loss_class = self.coef_class * loss_class
+
+        # calculate bounding box loss
+        out_boxes = outputs['pred_boxes'][batch_idx, out_idx]
+        tgt_boxes = torch.cat([tgt['boxes'][i] for tgt, (_, i) in zip(targets, indices)], dim=0)
+        loss_bbox = F.l1_loss(out_boxes, tgt_boxes, reduction='none')
+        loss_bbox = self.coef_bbox * loss_bbox
+
+        # calculate generalized iou loss
+        loss_giou = 1 - torch.diag(generalized_box_iou(box_cxcywh_to_xyxy(out_boxes), 
+                                                       box_cxcywh_to_xyxy(tgt_boxes)))
+        loss_giou = self.coef_giou * loss_giou
+
+        # final loss
+        cost = loss_class + loss_bbox + loss_giou
+
+        return cost
+
+    @torch.no_grad()
+    def _hungarian_matcher(self, outputs, targets):
+        batch_size, num_queries, num_class = outputs['pred_logits'].shape
+
+        out_prob = outputs['pred_logits'].flatten(0, 1)  # [batch_size * num_queries, num_classes]
+        out_bbox = outputs['pred_boxes'].flatten(0, 1)   # [batch_size * num_queries, 4]
+
+        tgt_ids  = torch.cat([v["labels"] for v in targets])
+        tgt_bbox = torch.cat([v["boxes"] for v in targets])
+
+        # compute the classification cost, 1 - probability, constant can be ommitted
+        cost_class = -out_prob[:, tgt_ids]
+        cost_class = self.coef_class * cost_class 
+
+        # compute the L1 cost between boxes
+        cost_bbox = torch.cdist(out_bbox, tgt_bbox, p=1)
+        cost_bbox = self.coef_bbox * cost_bbox
+
+        # compute giou cost between boxes
+        cost_giou = -generalized_box_iou(box_cxcywh_to_xyxy(out_bbox), box_cxcywh_to_xyxy(tgt_bbox))
+        cost_giou = self.coef_giou + cost_giou
+
+        # final cost matrix
+        cost = cost_class + cost_bbox + cost_giou
+        cost = cost.view(batch_size, num_queries, -1).to("cpu")
+        cost = cost.split([len(t["labels"]) for t in targets], -1)
+
+        # run hungarian matcher
+        indices = [linear_sum_assignment(c[i]) for i, c in enumerate(cost)]
+
+        return indices
 
 
 if __name__ == '__main__':
@@ -144,18 +221,38 @@ if __name__ == '__main__':
     device = "cuda"
     torch.manual_seed(0)
 
-    # test extraction block
-    batch_size, in_channels, out_channels = 2, 64, 128
-    num_points, xyz_dims, feat_dims = 1024, 3, in_channels
+    # # test extraction block
+    # batch_size, in_channels, out_channels = 2, 64, 128
+    # num_points, xyz_dims, feat_dims = 1024, 3, in_channels
     
-    xyz  = torch.randn(batch_size, num_points, xyz_dims).to(device)
-    feat = torch.randn(batch_size, num_points, feat_dims).to(device)
-    extraction_block = ExtractionBlock(in_channels, out_channels, num_samples=512, k_neighbors=24).to(device)
+    # xyz  = torch.randn(batch_size, num_points, xyz_dims).to(device)
+    # feat = torch.randn(batch_size, num_points, feat_dims).to(device)
+    # extraction_block = ExtractionBlock(in_channels, out_channels, num_samples=512, k_neighbors=24).to(device)
 
-    print("Feat: ", extraction_block(xyz, feat))
+    # print("Feat: ", extraction_block(xyz, feat))
 
-    # test point mlp
-    point = torch.randn(batch_size, 3, num_points * 2).to(device)
-    model = PointMLP().to(device)
+    # # test point mlp
+    # point = torch.randn(batch_size, 3, num_points * 2).to(device)
+    # model = PointMLP().to(device)
     
-    print("Output: ", model(point))
+    # print("Output: ", model(point))
+
+    # test hungarian matcher
+    num_labels, num_queries, num_classes = [2, 4], 100, 92
+    
+    targets = list()
+    for i, num_label in enumerate(num_labels):
+        targets.append({
+            'labels': torch.randint(0, num_classes, [num_label]),
+            'boxes': torch.rand([num_label, 4]),
+        })
+    
+    batch_size = len(num_labels)
+    outputs = {
+        "pred_logits": torch.rand([batch_size, num_queries, num_classes]).softmax(-1),
+        "pred_boxes": torch.rand([batch_size, num_queries, 4])
+    }
+
+    criterion = DETRLoss()
+    criterion(outputs, targets)
+
