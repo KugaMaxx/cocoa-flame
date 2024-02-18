@@ -35,10 +35,10 @@ class DvFire(Dataset):
 
         # load aedat4 data
         reader = kit.io.MonoCameraReader(aedat_file)
-        data, resolution = reader.loadData(), reader.getResolution("events")
+        sample = reader.loadData()
+        width, height = reader.getResolution("events")
         
         # parse targets
-        width, height = resolution
         targets = {
             'label': torch.tensor([self.label_dict[elem.get('label')]
                                    for elem in element.findall('box')]),
@@ -47,9 +47,10 @@ class DvFire(Dataset):
                                     float(elem.get('xbr')) / width,
                                     float(elem.get('ybr')) / height]
                                     for elem in element.findall('box')]),
+            'resolution': (width, height)
         }
 
-        return data, resolution, targets
+        return sample, targets
 
     def __len__(self):
         return len(self.elements)

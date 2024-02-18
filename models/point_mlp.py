@@ -139,7 +139,7 @@ class PointMLP(nn.Module):
         outputs_class = F.softmax(self.class_embed(feat), dim=2)
         outputs_coord = self.bbox_embed(feat).sigmoid()
 
-        return {'logits': outputs_class, 'boxes': outputs_coord}
+        return {'pred_logits': outputs_class, 'pred_boxes': outputs_coord}
 
 
 class DETRLoss(nn.Module):
@@ -221,21 +221,21 @@ if __name__ == '__main__':
     device = "cuda"
     torch.manual_seed(0)
 
-    # # test extraction block
-    # batch_size, in_channels, out_channels = 2, 64, 128
-    # num_points, xyz_dims, feat_dims = 1024, 3, in_channels
+    # test extraction block
+    batch_size, in_channels, out_channels = 2, 64, 128
+    num_points, xyz_dims, feat_dims = 1024, 3, in_channels
     
-    # xyz  = torch.randn(batch_size, num_points, xyz_dims).to(device)
-    # feat = torch.randn(batch_size, num_points, feat_dims).to(device)
-    # extraction_block = ExtractionBlock(in_channels, out_channels, num_samples=512, k_neighbors=24).to(device)
+    xyz  = torch.randn(batch_size, num_points, xyz_dims).to(device)
+    feat = torch.randn(batch_size, num_points, feat_dims).to(device)
+    extraction_block = ExtractionBlock(in_channels, out_channels, num_samples=512, k_neighbors=24).to(device)
 
-    # print("Feat: ", extraction_block(xyz, feat))
+    print("Feat: ", extraction_block(xyz, feat))
 
-    # # test point mlp
-    # point = torch.randn(batch_size, 3, num_points * 2).to(device)
-    # model = PointMLP().to(device)
+    # test point mlp
+    point = torch.randn(batch_size, 3, num_points * 2).to(device)
+    model = PointMLP().to(device)
     
-    # print("Output: ", model(point))
+    print("Output: ", model(point))
 
     # test hungarian matcher
     num_labels, num_queries, num_classes = [2, 4], 100, 92
@@ -245,6 +245,7 @@ if __name__ == '__main__':
         targets.append({
             'labels': torch.randint(0, num_classes, [num_label]),
             'boxes': torch.rand([num_label, 4]),
+            'resolution': (346, 260)
         })
     
     batch_size = len(num_labels)
@@ -255,4 +256,3 @@ if __name__ == '__main__':
 
     criterion = DETRLoss()
     criterion(outputs, targets)
-
