@@ -85,7 +85,7 @@ class ExtractionBlock(nn.Module):
 
 class PointMLP(nn.Module):
     def __init__(self, encrypt_dim=64, dim_expansion=2, encrypt_pts=1024, pts_reducer=2, 
-                 num_layers=4, num_classes=2, **kwargs):
+                 num_layers=4, num_classes=1, **kwargs):
         super().__init__()
         self.encrypt_dim = encrypt_dim
         self.encrypt_pts = encrypt_pts
@@ -170,7 +170,7 @@ class PointMLP(nn.Module):
 
 
 class DETRLoss(nn.Module):
-    def __init__(self, coef_class=1.0, coef_bbox=1.0, coef_giou=1.0, num_classes=2, eos_coef=0.1):
+    def __init__(self, coef_class=1.0, coef_bbox=1.0, coef_giou=1.0, num_classes=1, eos_coef=0.01):
         super().__init__()
         self.coef_class  = coef_class
         self.coef_bbox   = coef_bbox

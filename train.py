@@ -1,10 +1,8 @@
 import argparse
-import random
-
 import numpy as np
 
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.tensorboard import SummaryWriter
 
 from models import build_model
 from datasets import build_dataloader
@@ -21,8 +19,8 @@ def parse_args():
     parser.add_argument('--batch_size', default=8, type=int)
     parser.add_argument('--epochs', default=300, type=int)
     parser.add_argument('--seed', default=42, type=int)
-    parser.add_argument('--weight_decay', default=2e-4, type=float)
-    parser.add_argument('--learning_rate', default=0.1, type=float)
+    parser.add_argument('--weight_decay', default=1e-4, type=float)
+    parser.add_argument('--learning_rate', default=1e-5, type=float)
 
     # dataset
     parser.add_argument('--dataset_file', default='dv_fire')
@@ -45,6 +43,7 @@ def parse_args():
 
 
 def train(model, data_loader, optimizer, criterion):
+    total_loss = 0
     for batch_idx, (samples, targets) in enumerate(data_loader):
         # set models and criterion to train
         model.train()
@@ -57,8 +56,15 @@ def train(model, data_loader, optimizer, criterion):
         # back propagation
         optimizer.zero_grad()
         loss.backward()
+
+        # update
+        torch.nn.utils.clip_grad_norm_(model.parameters(), 1)
         optimizer.step()
-    print(loss)
+        total_loss += loss.item()
+
+    mean_loss = total_loss / (batch_idx + 1)
+
+    return mean_loss
 
 
 @torch.no_grad()
@@ -79,7 +85,6 @@ def evaluate(model, data_loader, optimizer, criterion):
     #     # evaluate
 
 
-
 if __name__ == '__main__':
     # parse arguments
     args = parse_args()
@@ -98,17 +103,29 @@ if __name__ == '__main__':
     model.to(device)
     
     # build training strategy
-    optimizer = torch.optim.SGD(model.parameters(), lr=args.learning_rate, momentum=0.9, weight_decay=args.weight_decay)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, args.epochs, eta_min=1e-3, last_epoch=args.start_epoch - 1)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=50, last_epoch=args.start_epoch - 1)
+    # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, args.epochs, eta_min=1e-3, last_epoch=args.start_epoch - 1)
+
+    # create tensor board writer
+    writer = SummaryWriter(log_dir='./', flush_secs=30)
 
     # Train model
     for epoch in range(args.start_epoch, args.epochs):
         print(f"Epoch(%d/%s) Learning Rate %s:" % (epoch + 1, args.epochs, optimizer.param_groups[0]['lr']))
         
         # training
-        train_result = train(model, data_loader=data_loader_train, optimizer=optimizer, criterion=criterion)
+        train_result = train(model, data_loader=data_loader_train, 
+                             optimizer=optimizer, criterion=criterion)
         
         # validation
-        test_result  = evaluate(model, data_loader=data_loader_val, optimizer=optimizer, criterion=criterion)
+        test_result  = evaluate(model, data_loader=data_loader_val, 
+                                optimizer=optimizer, criterion=criterion)
 
+        # update
         scheduler.step()
+        writer.add_scalar('loss', train_result, epoch)
+
+        print(train_result)
+    
+    writer.close()

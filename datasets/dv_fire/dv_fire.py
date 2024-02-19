@@ -42,8 +42,8 @@ class DvFire(Dataset):
 
         # parse samples
         sample = {
-            'events': self._to_tensor_event(data['events']),
-            'frames': self._to_tensor_frame(data['frames']),
+            'events': self._parse_events_to_tensor(data['events']),
+            'frames': self._parse_frames_to_tensor(data['frames']),
         }
         
         # parse targets
@@ -52,8 +52,8 @@ class DvFire(Dataset):
                                    for elem in element.findall('box')]),
             'boxes': torch.tensor([[float(elem.get('xtl')) / width,
                                     float(elem.get('ytl')) / height,
-                                    float(elem.get('xbr')) / width,
-                                    float(elem.get('ybr')) / height]
+                                    (float(elem.get('xbr')) - float(elem.get('xtl'))) / width,
+                                    (float(elem.get('ybr')) - float(elem.get('ytl'))) / height]
                                     for elem in element.findall('box')]),
             'resolution': torch.tensor([width, height])
         }
@@ -63,18 +63,16 @@ class DvFire(Dataset):
     def __len__(self):
         return len(self.elements)
 
-    def _to_tensor_event(self, events):
+    def _parse_events_to_tensor(self, events):
         # when empty
         if events.isEmpty():
             return None
-        
         # convert to tensor
         return torch.from_numpy(structured_to_unstructured(events.numpy()))
 
-    def _to_tensor_frame(self, frames):
+    def _parse_frames_to_tensor(self, frames):
         # when empty
         if frames.isEmpty():
             return None
-        
         # convert to tensor
-        return torch.from_numpy(frames.front().image)
+        return torch.from_numpy(frames.front().image)        
