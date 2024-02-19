@@ -91,6 +91,9 @@ class PointMLP(nn.Module):
         self.encrypt_pts = encrypt_pts
         self.num_layers  = num_layers
 
+        # Store device type
+        self.dummy_param = nn.Parameter(torch.empty(0))
+
         # Encrypt coordinates
         self.coord_encrypt = nn.Sequential(
             nn.Conv1d(3, encrypt_dim, kernel_size=1, bias=False),
@@ -121,13 +124,13 @@ class PointMLP(nn.Module):
         # bounding box embedding
         self.bbox_embed = MLP(last_channels, last_channels, 4, num_layers=3)
 
-    def forward(self, x):
-        # sample input tensor
-        xyz = x.permute(0, 2, 1).contiguous()
-        idx = pointnet2_utils.furthest_point_sample(xyz, self.encrypt_pts).long()
-        xyz = get_points_by_index(xyz, idx)  # [batch_size, encrypt_pts, 3]
+    def forward(self, samples):
+        # pre processing
+        device = self.dummy_param.device
+        xyz = torch.stack([self._pre_process(sample) for sample in samples]).to(device)
 
         # embedding
+        xyz = xyz.contiguous()  # [batch_size, encrypt_pts, 3]
         feat = self.coord_encrypt(xyz.permute(0, 2, 1))  # [batch_size, encrypt_dim, encrypt_pts]
 
         # backbone
@@ -140,20 +143,49 @@ class PointMLP(nn.Module):
         outputs_coord = self.bbox_embed(feat).sigmoid()
 
         return {'pred_logits': outputs_class, 'pred_boxes': outputs_coord}
+    
+    @torch.no_grad()
+    def _pre_process(self, sample):
+        if sample['events'] is None:
+            points = torch.zeros((self.encrypt_pts, 3))
+            return points
+        
+        # convert sample to model input
+        points = sample['events'][..., :3]
+        delta_timestamp = points[..., 0] - points[..., 0][0]
+
+        # set timestamp start from zero
+        points = points.float()
+        points[..., 0] = delta_timestamp * 1E-3
+
+        # sampling points to predefined number
+        num_points = len(points)
+        if num_points > self.encrypt_pts:
+            idx = torch.linspace(0, len(points) - 1, self.encrypt_pts).long()
+            points = points[idx]
+            return points
+        else:
+            points = torch.cat([points, torch.zeros((self.encrypt_pts - num_points, 3))])
+            return points
 
 
 class DETRLoss(nn.Module):
-    def __init__(self, weight_dict, coef_class=1.0, coef_bbox=1.0, coef_giou=1.0, num_classes=2, eos_coef=0.1):
+    def __init__(self, coef_class=1.0, coef_bbox=1.0, coef_giou=1.0, num_classes=2, eos_coef=0.1):
         super().__init__()
-        self.coef_class = coef_class
-        self.coef_bbox  = coef_bbox
-        self.coef_giou  = coef_giou
+        self.coef_class  = coef_class
+        self.coef_bbox   = coef_bbox
+        self.coef_giou   = coef_giou
+        self.num_classes = num_classes
 
         empty_weight = torch.ones(self.num_classes + 1)
         empty_weight[-1] = eos_coef
         self.register_buffer('empty_weight', empty_weight)
 
     def forward(self, outputs, targets):
+        # align type of device between outputs and targets
+        device = next(iter(outputs.values())).device
+        targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
+
         # run Hungarian matcher
         indices   = self._hungarian_matcher(outputs, targets)
         batch_idx = torch.cat([torch.full([len(tgt)], i) for i, (out, tgt) in enumerate(indices)])
@@ -162,21 +194,21 @@ class DETRLoss(nn.Module):
 
         # calculate classification loss
         out_logits = outputs['pred_logits']
-        tgt_labels = torch.full(out_logits.shape[:2], self.num_classes, dtype=torch.int64)
+        tgt_labels = torch.full(out_logits.shape[:2], self.num_classes, dtype=torch.int64, device=device)
         tgt_labels[batch_idx, out_idx] = torch.cat([tgt['labels'][i] for tgt, (_, i) in zip(targets, indices)], dim=0)
-        loss_class = F.cross_entropy(out_logits.transpose(1, 2), tgt_labels, self.empty_weight)
-        loss_class = self.coef_class * loss_class
+        loss_class = F.cross_entropy(out_logits.transpose(1, 2), tgt_labels, self.empty_weight.to(device))
+        loss_class = self.coef_class * loss_class.sum()
 
         # calculate bounding box loss
         out_boxes = outputs['pred_boxes'][batch_idx, out_idx]
         tgt_boxes = torch.cat([tgt['boxes'][i] for tgt, (_, i) in zip(targets, indices)], dim=0)
         loss_bbox = F.l1_loss(out_boxes, tgt_boxes, reduction='none')
-        loss_bbox = self.coef_bbox * loss_bbox
+        loss_bbox = self.coef_bbox * loss_bbox.sum()
 
         # calculate generalized iou loss
         loss_giou = 1 - torch.diag(generalized_box_iou(box_cxcywh_to_xyxy(out_boxes), 
                                                        box_cxcywh_to_xyxy(tgt_boxes)))
-        loss_giou = self.coef_giou * loss_giou
+        loss_giou = self.coef_giou * loss_giou.sum()
 
         # final loss
         cost = loss_class + loss_bbox + loss_giou

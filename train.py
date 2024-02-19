@@ -18,18 +18,20 @@ def parse_args():
     parser.add_argument('--device', default='cuda', type=str)
     
     # training strategy
+    parser.add_argument('--batch_size', default=8, type=int)
+    parser.add_argument('--epochs', default=300, type=int)
     parser.add_argument('--seed', default=42, type=int)
-    parser.add_argument('--batch_size', default=4, type=int)
     parser.add_argument('--weight_decay', default=2e-4, type=float)
     parser.add_argument('--learning_rate', default=0.1, type=float)
-    parser.add_argument('--epochs', default=300, type=int)
 
     # dataset
     parser.add_argument('--dataset_file', default='dv_fire')
-    parser.add_argument('--dataset_path', default='./datasets/dv_fire/aedat_to_data', type=str)
+    parser.add_argument('--dataset_path', default='/home/kuga/Workspace/aedat_to_dataset/', type=str)
     parser.add_argument('--num_workers', default=2, type=int)
 
     # model
+    parser.add_argument('--model_name', default='point_mlp', type=str)
+
     ## point_mlp
 
     ## local grouper
@@ -42,38 +44,39 @@ def parse_args():
     return parser.parse_args()
 
 
-def train(model, data_loader, optimizer, criterion, device):
+def train(model, data_loader, optimizer, criterion):
     for batch_idx, (samples, targets) in enumerate(data_loader):
         # set models and criterion to train
         model.train()
         criterion.train()
         
         # inference
-        points = torch.tensor(samples['events'].numpy()).to(device)
-        outputs = model(points)
+        outputs = model(samples)
         loss = criterion(outputs, targets)
 
         # back propagation
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
+    print(loss)
 
 
 @torch.no_grad()
-def evaluate(model, data_loader, optimizer, criterion, device):
-    for batch_idx, (samples, targets) in enumerate(data_loader):
-        # set models and criterion to evaluate
-        model.eval()
-        criterion.eval()
+def evaluate(model, data_loader, optimizer, criterion):
+    pass
+    # for batch_idx, (samples, targets) in enumerate(data_loader):
+    #     # set models and criterion to evaluate
+    #     model.eval()
+    #     criterion.eval()
         
-        # inference
-        points = torch.tensor(samples['events'].numpy()).to(device)
-        outputs = model(points)
+    #     # inference
+    #     points = torch.tensor(samples['events'].numpy()).to(device)
+    #     outputs = model(points)
 
-        # post process
+    #     # post process
         
 
-        # evaluate
+    #     # evaluate
 
 
 
@@ -92,23 +95,20 @@ if __name__ == '__main__':
     device = torch.device(args.device)
 
     model, criterion = build_model(args)
-    model.to(args.device)
+    model.to(device)
     
     # build training strategy
     optimizer = torch.optim.SGD(model.parameters(), lr=args.learning_rate, momentum=0.9, weight_decay=args.weight_decay)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, args.epoch, eta_min=1e-3, last_epoch=args.start_epoch - 1)
-
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, args.epochs, eta_min=1e-3, last_epoch=args.start_epoch - 1)
 
     # Train model
     for epoch in range(args.start_epoch, args.epochs):
-        print(f"Epoch(%d/%s) Learning Rate %s:" % (epoch + 1, args.epoch, optimizer.param_groups[0]['lr']))
+        print(f"Epoch(%d/%s) Learning Rate %s:" % (epoch + 1, args.epochs, optimizer.param_groups[0]['lr']))
         
         # training
-        train_result = train(model, data_loader=data_loader_train, optimizer=optimizer, 
-                             criterion=criterion, device=args.device)
+        train_result = train(model, data_loader=data_loader_train, optimizer=optimizer, criterion=criterion)
         
         # validation
-        test_result  = evaluate(model, data_loader=data_loader_val, optimizer=optimizer,
-                                criterion=criterion, device=args.device)
+        test_result  = evaluate(model, data_loader=data_loader_val, optimizer=optimizer, criterion=criterion)
 
         scheduler.step()

@@ -5,24 +5,28 @@ from torch.utils.data import RandomSampler, SequentialSampler, BatchSampler
 from .dv_fire.dv_fire import DvFire
 
 
-__all__ = {
-    'dv_fire': DvFire
-}
-
 def collate_fn(batch):
+    batch = list(zip(*batch))
     return tuple(batch)
 
 
 def build_dataloader(args, partition):
-    dataset = __all__[args.dataset_file](
+    assert partition in ['test', 'train'], \
+        "Support partitions are ['test', 'train']"
+
+    candidate_datasets = {
+        'dv_fire': DvFire
+    }
+
+    dataset = candidate_datasets[args.dataset_file](
         dataset_path=args.dataset_path,
         partition=partition
     )
 
-    if partition is 'train':
+    if partition == 'train':
         sampler = RandomSampler(dataset)
         batch_sampler = BatchSampler(sampler, args.batch_size, drop_last=True)
-    else:
+    elif partition == 'test':
         sampler = SequentialSampler(dataset)
         batch_sampler = BatchSampler(sampler, args.batch_size, drop_last=False)
     
