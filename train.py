@@ -1,12 +1,13 @@
 import argparse
 import numpy as np
+from pathlib import Path
 
 import torch
 from torch.utils.tensorboard import SummaryWriter
 
 from models import build_model
 from datasets import build_dataloader
-from utils.misc import set_seed
+from utils.misc import set_seed, save_checkpoint, load_checkpoint
 
 
 def parse_args():
@@ -14,6 +15,7 @@ def parse_args():
 
     # common
     parser.add_argument('--device', default='cuda', type=str)
+    parser.add_argument('--output_dir', default='./checkpoint', type=str)
     
     # training strategy
     parser.add_argument('--batch_size', default=8, type=int)
@@ -25,7 +27,7 @@ def parse_args():
     # dataset
     parser.add_argument('--dataset_file', default='dv_fire')
     parser.add_argument('--dataset_path', default='/home/kuga/Workspace/aedat_to_dataset/', type=str)
-    parser.add_argument('--num_workers', default=2, type=int)
+    parser.add_argument('--num_workers', default=1, type=int)
 
     # model
     parser.add_argument('--model_name', default='point_mlp', type=str)
@@ -37,7 +39,10 @@ def parse_args():
     ## criterion
 
     # checkpoint
-    parser.add_argument('--start_epoch', default=0, type=int)
+    parser.add_argument('--resume', action='store_true')
+    parser.add_argument('--checkpoint_dir', default='./checkpoint', type=str)
+    # parser.add_argument('--cpkt_name', default='last_checkpoint', type=str)
+    parser.add_argument('--checkpoint_epoch', default=50, type=int)
 
     return parser.parse_args()
 
@@ -69,28 +74,42 @@ def train(model, data_loader, optimizer, criterion):
 
 @torch.no_grad()
 def evaluate(model, data_loader, optimizer, criterion):
-    pass
-    # for batch_idx, (samples, targets) in enumerate(data_loader):
-    #     # set models and criterion to evaluate
-    #     model.eval()
-    #     criterion.eval()
+    total_loss = 0
+    for batch_idx, (samples, targets) in enumerate(data_loader):
+        # set models and criterion to evaluate
+        model.eval()
+        criterion.eval()
         
-    #     # inference
-    #     points = torch.tensor(samples['events'].numpy()).to(device)
-    #     outputs = model(points)
+        # inference
+        outputs = model(samples)
+        loss = criterion(outputs, targets)
+        total_loss += loss.item()
 
-    #     # post process
-        
+    mean_loss = total_loss / (batch_idx + 1)
 
-    #     # evaluate
+    # post process
+    print(mean_loss)
 
 
 if __name__ == '__main__':
     # parse arguments
     args = parse_args()
 
-    # fix the seed for reproducibility
-    set_seed(args.seed)
+    # fix for reproducibility
+    seed   = set_seed(args.seed)
+
+    # create tensor board writer
+    writer = SummaryWriter(log_dir='./', flush_secs=30)
+
+    # create logger
+    logger = None
+
+    # initialize
+    stat = dict(
+        epoch = 0, args = args,
+        weight_decay  = args.weight_decay,
+        learning_rate = args.learning_rate,
+    )
 
     # build dataset
     data_loader_train = build_dataloader(args, partition='train') 
@@ -98,20 +117,21 @@ if __name__ == '__main__':
 
     # build model
     device = torch.device(args.device)
-
     model, criterion = build_model(args)
     model.to(device)
     
-    # build training strategy
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=50, last_epoch=args.start_epoch - 1)
-    # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, args.epochs, eta_min=1e-3, last_epoch=args.start_epoch - 1)
+    # load checkpoint
+    checkpoint_dir = Path(args.checkpoint_dir)
+    if args.resume:
+        model, stat = load_checkpoint(model, stat, checkpoint_dir / "last_checkpoint.pth")
 
-    # create tensor board writer
-    writer = SummaryWriter(log_dir='./', flush_secs=30)
+    # set training strategy
+    optimizer = torch.optim.AdamW(model.parameters(), lr=stat['learning_rate'], weight_decay=stat['weight_decay'])
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=50, last_epoch=stat['epoch'] - 1)
+    # scheduler = torch.optim.scheduler.CosineAnnealingLR(optimizer, args.epochs - stat['epoch'], eta_min=1e-3, last_epoch=stat['epoch'] - 1)
 
     # Train model
-    for epoch in range(args.start_epoch, args.epochs):
+    for epoch in range(stat['epoch'], args.epochs):
         print(f"Epoch(%d/%s) Learning Rate %s:" % (epoch + 1, args.epochs, optimizer.param_groups[0]['lr']))
         
         # training
@@ -125,6 +145,9 @@ if __name__ == '__main__':
         # update
         scheduler.step()
         writer.add_scalar('loss', train_result, epoch)
+
+        if (epoch + 1) % args.checkpoint_epoch == 0:
+            save_checkpoint(model, stat, checkpoint_dir / "last_checkpoint.pth")
 
         print(train_result)
     
