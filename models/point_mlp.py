@@ -184,7 +184,10 @@ class DETRLoss(nn.Module):
     def forward(self, outputs, targets):
         # align type of device between outputs and targets
         device = next(iter(outputs.values())).device
-        targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
+        targets = [
+            {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in t.items()} 
+            for t in targets
+        ]
 
         # run Hungarian matcher
         indices   = self._hungarian_matcher(outputs, targets)

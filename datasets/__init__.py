@@ -19,7 +19,7 @@ def build_dataloader(args, partition):
     }
 
     dataset = candidate_datasets[args.dataset_file](
-        dataset_path=args.dataset_path,
+        file_path=args.dataset_path,
         partition=partition
     )
 
