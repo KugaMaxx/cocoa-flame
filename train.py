@@ -92,7 +92,7 @@ if __name__ == '__main__':
         print(f"Epoch(%d/%s) Learning Rate %s:" % (epoch + 1, args.epochs, optimizer.param_groups[0]['lr']))
         
         # training
-        # train_result = train(model, criterion=criterion, data_loader=data_loader_train, optimizer=optimizer, scheduler=scheduler)
+        train_result = train(model, criterion=criterion, data_loader=data_loader_train, optimizer=optimizer, scheduler=scheduler)
         
         # validation
         test_result  = evaluate(model, criterion=criterion, data_loader=data_loader_val)
