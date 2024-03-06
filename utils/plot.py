@@ -6,7 +6,7 @@ from typing import List, Dict
 from PIL import Image, ImageDraw, ImageFont, ImageTk
 
 
-def plot_projected_events(events, bkg_image):
+def plot_projected_events(bkg_image, events):
     _, x, y, polarity = events[:, 0], events[:, 1], events[:, 2], events[:, 3]
 
     pos_ind = polarity == 1

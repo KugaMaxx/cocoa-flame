@@ -14,6 +14,7 @@ class DatasetBase(Dataset):
             f"Dataset partition ({partition}) does not exit."
 
         self.cat_ids = dict()
+        self.aet_ids = dict()
 
     def __getitem__(self, index):
         raise NotImplementedError

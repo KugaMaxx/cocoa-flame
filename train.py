@@ -18,7 +18,7 @@ def parse_args():
     parser.add_argument('--output_dir', default='./checkpoint', type=str)
     
     # training strategy
-    parser.add_argument('--batch_size', default=8, type=int)
+    parser.add_argument('--batch_size', default=32, type=int)
     parser.add_argument('--epochs', default=300, type=int)
     parser.add_argument('--seed', default=42, type=int)
     parser.add_argument('--weight_decay', default=1e-4, type=float)
@@ -26,7 +26,7 @@ def parse_args():
 
     # dataset
     parser.add_argument('--dataset_file', default='dv_fire')
-    parser.add_argument('--dataset_path', default='/home/kuga/Workspace/aedat_to_dataset/', type=str)
+    parser.add_argument('--dataset_path', default='/home/dszh/Workspace/cocoa-flame/datasets/dv_fire/aedat_to_data/', type=str)
     parser.add_argument('--num_workers', default=1, type=int)
 
     # model
@@ -54,8 +54,8 @@ if __name__ == '__main__':
     # fix for reproducibility
     seed = set_seed(args.seed)
 
-    # create tensor board writer
-    writer = SummaryWriter(log_dir='./', flush_secs=30)
+    # # create tensor board writer
+    # writer = SummaryWriter(log_dir='./', flush_secs=30)
 
     # create logger
     logger = None
@@ -98,11 +98,11 @@ if __name__ == '__main__':
         test_result  = evaluate(model, criterion=criterion, data_loader=data_loader_val)
 
         # update
-        writer.add_scalar('loss', train_result, epoch)
+        # writer.add_scalar('loss', train_result, epoch)
 
-        if (epoch + 1) % args.checkpoint_epoch == 0:
-            save_checkpoint(model, stat, checkpoint_dir / "last_checkpoint.pth")
+        # if (epoch + 1) % args.checkpoint_epoch == 0:
+        #     save_checkpoint(model, stat, checkpoint_dir / "last_checkpoint.pth")
 
         print(train_result)
     
-    writer.close()
+    # writer.close()

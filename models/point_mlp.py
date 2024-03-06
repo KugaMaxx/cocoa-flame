@@ -142,7 +142,13 @@ class PointMLP(nn.Module):
         outputs_class = F.softmax(self.class_embed(feat), dim=2)
         outputs_coord = self.bbox_embed(feat).sigmoid()
 
-        return {'pred_logits': outputs_class, 'pred_boxes': outputs_coord}
+        # post processing
+        outputs = tuple(
+            {'logits': logits, 'bboxes': bboxes} \
+                for logits, bboxes in zip(outputs_class, outputs_coord)
+        )
+
+        return outputs
     
     @torch.no_grad()
     def _pre_process(self, sample):
@@ -183,10 +189,10 @@ class DETRLoss(nn.Module):
 
     def forward(self, outputs, targets):
         # align type of device between outputs and targets
-        device = next(iter(outputs.values())).device
+        device = next(iter(outputs[0].values())).device
         targets = [
-            {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in t.items()} 
-            for t in targets
+            {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in t.items()} \
+                for t in targets
         ]
 
         # run Hungarian matcher
@@ -194,17 +200,21 @@ class DETRLoss(nn.Module):
         batch_idx = torch.cat([torch.full([len(tgt)], i) for i, (out, tgt) in enumerate(indices)])
         out_idx   = torch.cat([torch.tensor(out) for (out, _) in indices])
         tgt_idx   = torch.cat([torch.tensor(tgt) for (_, tgt) in indices])
-
-        # calculate classification loss
-        out_logits = outputs['pred_logits']
+        
+        # convert to labels
+        out_logits = torch.stack([v['logits'] for v in outputs])
         tgt_labels = torch.full(out_logits.shape[:2], self.num_classes, dtype=torch.int64, device=device)
         tgt_labels[batch_idx, out_idx] = torch.cat([tgt['labels'][i] for tgt, (_, i) in zip(targets, indices)], dim=0)
+
+        # convert to bboxes
+        out_boxes = torch.cat([out['bboxes'][i] for out, (i, _) in zip(outputs, indices)], dim=0)
+        tgt_boxes = torch.cat([tgt['bboxes'][i] for tgt, (_, i) in zip(targets, indices)], dim=0)
+
+        # calculate classification loss
         loss_class = F.cross_entropy(out_logits.transpose(1, 2), tgt_labels, self.empty_weight.to(device))
         loss_class = self.coef_class * loss_class.sum()
 
-        # calculate bounding box loss
-        out_boxes = outputs['pred_boxes'][batch_idx, out_idx]
-        tgt_boxes = torch.cat([tgt['boxes'][i] for tgt, (_, i) in zip(targets, indices)], dim=0)
+        # calculate bounding box loss        
         loss_bbox = F.l1_loss(out_boxes, tgt_boxes, reduction='none')
         loss_bbox = self.coef_bbox * loss_bbox.sum()
 
@@ -214,19 +224,18 @@ class DETRLoss(nn.Module):
         loss_giou = self.coef_giou * loss_giou.sum()
 
         # final loss
-        cost = loss_class + loss_bbox + loss_giou
-
-        return cost
+        return loss_class + loss_bbox + loss_giou
 
     @torch.no_grad()
     def _hungarian_matcher(self, outputs, targets):
-        batch_size, num_queries, num_class = outputs['pred_logits'].shape
+        batch_size  = len(outputs)
+        num_queries, num_class = next(iter(outputs))['logits'].shape
 
-        out_prob = outputs['pred_logits'].flatten(0, 1)  # [batch_size * num_queries, num_classes]
-        out_bbox = outputs['pred_boxes'].flatten(0, 1)   # [batch_size * num_queries, 4]
+        out_prob = torch.cat([v['logits'] for v in outputs])  # [batch_size * num_queries, num_classes]
+        out_bbox = torch.cat([v['bboxes'] for v in outputs])  # [batch_size * num_queries, 4]
 
-        tgt_ids  = torch.cat([v["labels"] for v in targets])
-        tgt_bbox = torch.cat([v["boxes"] for v in targets])
+        tgt_ids  = torch.cat([v['labels'] for v in targets])
+        tgt_bbox = torch.cat([v['bboxes'] for v in targets])
 
         # compute the classification cost, 1 - probability, constant can be ommitted
         cost_class = -out_prob[:, tgt_ids]
@@ -279,7 +288,7 @@ if __name__ == '__main__':
     for i, num_label in enumerate(num_labels):
         targets.append({
             'labels': torch.randint(0, num_classes, [num_label]),
-            'boxes': torch.rand([num_label, 4]),
+            'bboxes': torch.rand([num_label, 4]),
             'resolution': (346, 260)
         })
     

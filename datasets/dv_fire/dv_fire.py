@@ -21,20 +21,26 @@ class DvFire(DatasetBase):
         xml_root = xml_file.getroot()
 
         # mapping category to index
-        self.cat_ids.update({label.get('name'): idx for idx, label \
-                             in enumerate(xml_root.find('labels').findall('label'))})
+        self.cat_ids.update({
+            label.get('name'): index for index, label \
+                in enumerate(xml_root.find('labels').findall('label'))
+        })
 
-        # store elements
-        annotations = xml_file.getroot().find('annotations')
-        self.elements = [element for element in annotations.findall('image')]
+        # mapping file to index
+        self.aet_ids.update({
+            aedat.get('name'): index for index, aedat \
+                in enumerate(xml_root.find('annotations').findall('image'))
+        })
+
+        self.elements = [element for element in xml_root.find('annotations').findall('image')]
 
     def __getitem__(self, index):
         # get item path
         element = self.elements[index]
-        aedat_file = os.path.join(self.file_path, f"data/{element.get('name')}")
+        file_name = self.elements[index].get('name')
 
         # load aedat4 data
-        reader = kit.io.MonoCameraReader(aedat_file)
+        reader = kit.io.MonoCameraReader(str(self.file_path / f"data/{file_name}"))
         data = reader.loadData()
         width, height = reader.getResolution("events")
 
@@ -46,21 +52,21 @@ class DvFire(DatasetBase):
         
         # parse targets
         targets = {
-            'file': aedat_file,
+            'file': file_name,
             'labels': torch.tensor([self.cat_ids[elem.get('label')]
                                    for elem in element.findall('box')]),
                                    # todo: 改成 bboxes
-            'boxes': torch.tensor([[float(elem.get('xtl')) / width,
+            'bboxes': torch.tensor([[float(elem.get('xtl')) / width,
                                     float(elem.get('ytl')) / height,
                                     (float(elem.get('xbr')) - float(elem.get('xtl'))) / width,
                                     (float(elem.get('ybr')) - float(elem.get('ytl'))) / height]
                                     for elem in element.findall('box')]),
-            'resolution': torch.tensor([width, height])
+            'resolution': (width, height)
         }
 
         # if sample['frames'] is not None:
-        #     image = plot_projected_events(sample['events'].numpy(), sample['frames'].numpy())
-        #     plot_detection_result(image, targets['labels'].tolist(), targets['boxes'].tolist(), [0.32], ['fire'])
+        #     image = plot_projected_events(sample['frames'].numpy(), sample['events'].numpy())
+        #     plot_detection_result(image, targets['labels'].tolist(), targets['bboxes'].tolist(), [0.32], ['fire'])
 
         return sample, targets
 
