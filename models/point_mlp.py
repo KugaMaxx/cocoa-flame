@@ -2,7 +2,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from pointnet2_ops import pointnet2_utils
 from scipy.optimize import linear_sum_assignment
 
 from models.common import MLP, ResidualBlock, LocalGrouper
@@ -201,12 +200,12 @@ class DETRLoss(nn.Module):
         out_idx   = torch.cat([torch.tensor(out) for (out, _) in indices])
         tgt_idx   = torch.cat([torch.tensor(tgt) for (_, tgt) in indices])
         
-        # convert to labels
+        # convert labels
         out_logits = torch.stack([v['logits'] for v in outputs])
         tgt_labels = torch.full(out_logits.shape[:2], self.num_classes, dtype=torch.int64, device=device)
         tgt_labels[batch_idx, out_idx] = torch.cat([tgt['labels'][i] for tgt, (_, i) in zip(targets, indices)], dim=0)
 
-        # convert to bboxes
+        # convert bboxes
         out_boxes = torch.cat([out['bboxes'][i] for out, (i, _) in zip(outputs, indices)], dim=0)
         tgt_boxes = torch.cat([tgt['bboxes'][i] for tgt, (_, i) in zip(targets, indices)], dim=0)
 

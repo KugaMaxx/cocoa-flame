@@ -40,7 +40,7 @@ class DvFire(DatasetBase):
         file_name = self.elements[index].get('name')
 
         # load aedat4 data
-        reader = kit.io.MonoCameraReader(str(self.file_path / f"data/{file_name}"))
+        reader = kit.io.MonoCameraReader(str(self.file_path / f"{file_name}"))
         data = reader.loadData()
         width, height = reader.getResolution("events")
 
@@ -57,10 +57,10 @@ class DvFire(DatasetBase):
                                    for elem in element.findall('box')]),
                                    # todo: 改成 bboxes
             'bboxes': torch.tensor([[float(elem.get('xtl')) / width,
-                                    float(elem.get('ytl')) / height,
-                                    (float(elem.get('xbr')) - float(elem.get('xtl'))) / width,
-                                    (float(elem.get('ybr')) - float(elem.get('ytl'))) / height]
-                                    for elem in element.findall('box')]),
+                                     float(elem.get('ytl')) / height,
+                                     (float(elem.get('xbr')) - float(elem.get('xtl'))) / width,
+                                     (float(elem.get('ybr')) - float(elem.get('ytl'))) / height]
+                                     for elem in element.findall('box')]),
             'resolution': (width, height)
         }
 
