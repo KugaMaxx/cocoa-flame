@@ -26,7 +26,7 @@ def parse_args():
 
     # dataset
     parser.add_argument('--dataset_file', default='dv_fire')
-    parser.add_argument('--dataset_path', default='/home/dszh/Workspace/cocoa-flame/datasets/dv_fire/aedat_to_data/', type=str)
+    parser.add_argument('--dataset_path', default='/home/kuga/Workspace/cocoa-flame/datasets/dv_fire/aedat_to_data/', type=str)
     parser.add_argument('--num_workers', default=1, type=int)
 
     # model

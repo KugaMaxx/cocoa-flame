@@ -11,7 +11,7 @@ from collections import defaultdict
 class Evaluator(object):
     def __init__(self, 
                  aet_ids: Dict = {'test00': 0, 'test01': 1, 'test02': 2}, 
-                 cat_ids: Dict = {'fire': 0, 'book': 1, 'dog': 2}) -> None:
+                 cat_ids: Dict = {'fire': 0, 'book': 1, 'dog': 2, 'cat': 3, 'fly': 4, 'brush': 5}) -> None:
         # parameters
         self.aet_ids = aet_ids
         self.cat_ids = cat_ids
@@ -46,31 +46,29 @@ class Evaluator(object):
             for tgt_cls, tgt_box in zip(target['labels'], target['bboxes']):
                 # parse elements
                 category_id = tgt_cls.item()
-                bbox = tgt_box.tolist()
-                area = (bbox[2] * width) * (bbox[3] * height)
+                xtl, ytl, w, h = tgt_box.tolist()
                 
                 # emplace back
                 self._gts[image_id, category_id].append({
                     'image_id': image_id,
                     'category_id': category_id,
-                    'bbox': bbox,
-                    'area': area
+                    'bbox': [xtl, ytl, xtl + w, ytl + h],
+                    'area': (w * width) * (h * height)
                 }) 
 
             # convert output
             for out_log, out_box in zip(output['logits'], output['bboxes']):
                 # parse elements
                 category_id = out_log.max(-1)[1].item()
-                bbox = out_box.tolist()
-                area = (bbox[2] * width) * (bbox[3] * height)
+                xtl, ytl, w, h = out_box.tolist()
                 score = out_log.max(-1)[0].item()
 
                 # emplace back
                 self._dts[image_id, category_id].append({
                     'image_id': image_id,
                     'category_id': category_id,
-                    'bbox': bbox,
-                    'area': area,
+                    'bbox': [xtl, ytl, xtl + w, ytl + h],
+                    'area': (w * width) * (h * height),
                     'score': score
                 })
 
@@ -154,14 +152,14 @@ class Evaluator(object):
                         if ious[dt_ind, gt_ind] < iou: continue
                         
                         # if match successful and best so far, store appropriately
-                        iou = ious[dt_ind,gt_ind]
+                        iou = ious[dt_ind, gt_ind]
                         m = gt_ind
                     
                     # if match made store id of match for both dt and gt
                     if m == -1: continue
                     dtIg[t_ind, dt_ind] = gtIg[m]
-                    dtm[t_ind, dt_ind]  = gt[m]['id']
-                    gtm[t_ind, m]     = d['id']
+                    dtm[t_ind, dt_ind]  = 1 # need to test
+                    gtm[t_ind, m]       = 1 # need to test
 
         # set unmatched detections outside of area range to ignore
         a = np.array([d['area'] < area[0] or d['area'] > area[1] for d in dt]).reshape((1, len(dt)))
@@ -208,8 +206,8 @@ class Evaluator(object):
                 npig = np.count_nonzero(gtIg == 0)
                 if npig == 0:
                     continue
-                tps = np.logical_and(               dtm,  np.logical_not(dtIg) )
-                fps = np.logical_and(np.logical_not(dtm), np.logical_not(dtIg) )
+                tps = np.logical_and(               dtm,  np.logical_not(dtIg))
+                fps = np.logical_and(np.logical_not(dtm), np.logical_not(dtIg))
 
                 tp_sum = np.cumsum(tps, axis=1).astype(dtype=float)
                 fp_sum = np.cumsum(fps, axis=1).astype(dtype=float)
@@ -218,7 +216,7 @@ class Evaluator(object):
                     fp = np.array(fp)
                     nd = len(tp)
                     rc = tp / npig
-                    pr = tp / (fp+tp+np.spacing(1))
+                    pr = tp / (fp + tp + np.spacing(1))
                     q  = np.zeros((R,))
                     ss = np.zeros((R,))
 
@@ -242,6 +240,7 @@ class Evaluator(object):
                             ss[ri] = dtScores[pi]
                     except:
                         pass
+
                     precision[t, :, cat_ind, area_ind] = np.array(q)
                     scores[t, :, cat_ind, area_ind] = np.array(ss)
 
@@ -351,33 +350,58 @@ def evaluate(model: nn.Module, criterion: nn.Module, data_loader: Iterable):
 
 
 if __name__ == '__main__':
-    targets = tuple([
-        {
-            'file': 'test01',
-            'labels': torch.tensor([0, 0, 0, 3]).cuda(),
-            'bboxes': torch.rand([4, 4]).cuda(),
-            'resolution': (346, 260)
-        },
-        {
-            'file': 'test02',
-            'labels': torch.tensor([1, 3, 4]).cuda(),
-            'bboxes': torch.rand([3, 4]).cuda(),
-            'resolution': (346, 260)
-        },
-    ])
+    torch.manual_seed(114)
 
     num_query = 10
     num_class = 6
 
+    # targets = tuple([
+    #     {
+    #         'file': 'test01',
+    #         'labels': torch.randint(low=0, high=num_class, size=(28,)).cuda(),
+    #         'bboxes': torch.rand([28, 4]).cuda(),
+    #         'resolution': (346, 260)
+    #     },
+    #     {
+    #         'file': 'test02',
+    #         'labels': torch.randint(low=0, high=num_class, size=(13,)).cuda(),
+    #         'bboxes': torch.rand([13, 4]).cuda(),
+    #         'resolution': (346, 260)
+    #     },
+    # ])
+
+    # outputs = tuple([
+    #     {
+    #         'logits': torch.rand([num_query, num_class + 1]).softmax(-1).cuda(),
+    #         'bboxes': torch.rand([num_query, 4]).cuda(),
+    #     },
+    #     {
+    #         'logits': torch.rand([num_query, num_class + 1]).softmax(-1).cuda(),
+    #         'bboxes': torch.rand([num_query, 4]).cuda(),
+    #     },
+    # ])
+
+
+    targets = tuple([
+        {
+            'file': 'test01',
+            'labels': torch.tensor([0, 0]).cuda(),
+            'bboxes': torch.tensor([[0.1, 0.2, 0.2, 0.1],
+                                    [0.0, 0.0, 0.3, 0.3]]).cuda(),
+            'resolution': (346, 260)
+        }
+    ])
+
     outputs = tuple([
         {
-            'logits': torch.rand([num_query, num_class]).softmax(-1).cuda(),
-            'bboxes': torch.rand([num_query, 4]).cuda(),
-        },
-        {
-            'logits': torch.rand([num_query, num_class]).softmax(-1).cuda(),
-            'bboxes': torch.rand([num_query, 4]).cuda(),
-        },
+            'logits': torch.tensor([[0.3, 0.1, 0.1, 0.1, 0.1, 0.2, 0.1]]).cuda(),
+            'bboxes': torch.tensor([[0.0, 0.0, 0.4, 0.4],
+                                    [0.1, 0.2, 0.1, 0.1],
+                                    [0.2, 0.3, 0.1, 0.2],
+                                    [0.1, 0.1, 0.8, 0.8],
+                                    [0.5, 0.6, 0.3, 0.2],
+                                    [0.7, 0.6, 0.1, 0.1]]).cuda(),
+        }
     ])
 
     eval = Evaluator()
