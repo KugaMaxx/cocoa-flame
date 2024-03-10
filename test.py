@@ -8,8 +8,7 @@ from torch.utils.tensorboard import SummaryWriter
 from models import build_model
 from datasets import build_dataloader
 from utils.misc import set_seed, save_checkpoint, load_checkpoint
-from utils.plot import plot_projected_events, plot_detection_result
-from utils.boxes import box_cxcywh_to_xyxy
+from engine import train, evaluate
 
 
 def parse_args():
@@ -49,32 +48,6 @@ def parse_args():
     return parser.parse_args()
 
 
-def rescale_bboxes(out_bbox, size):
-    img_w, img_h = size
-    b = box_cxcywh_to_xyxy(out_bbox)
-    b = b * torch.tensor([img_w, img_h, img_w, img_h], dtype=torch.float32)
-    return b
-
-CLASSES = [
-    'fire', 'N/A'
-]
-
-COLORS = [[0.000, 0.447, 0.741], [0.850, 0.325, 0.098], [0.929, 0.694, 0.125],
-          [0.494, 0.184, 0.556], [0.466, 0.674, 0.188], [0.301, 0.745, 0.933]]
-
-@torch.no_grad()
-def evaluate(model, data_loader, optimizer, criterion):
-    total_loss = 0
-    for batch_idx, (samples, targets) in enumerate(data_loader):
-        # set models and criterion to evaluate
-        model.eval()
-        criterion.eval()
-        
-        # inference
-        outputs = model(samples)
-        outputs = {k: v.cpu() for k, v in outputs.items()}
-
-
 if __name__ == '__main__':
     # parse arguments
     args = parse_args()
@@ -82,8 +55,8 @@ if __name__ == '__main__':
     # fix for reproducibility
     seed   = set_seed(args.seed)
 
-    # create tensor board writer
-    writer = SummaryWriter(log_dir='./', flush_secs=30)
+    # # create tensor board writer
+    # writer = SummaryWriter(log_dir='./', flush_secs=30)
 
     # create logger
     logger = None
@@ -116,7 +89,6 @@ if __name__ == '__main__':
     # scheduler = torch.optim.scheduler.CosineAnnealingLR(optimizer, args.epochs - stat['epoch'], eta_min=1e-3, last_epoch=stat['epoch'] - 1)
 
     # validation
-    test_result  = evaluate(model, data_loader=data_loader_val, 
-                            optimizer=optimizer, criterion=criterion)
+    test_result = evaluate(model, criterion=criterion, data_loader=data_loader_val)
 
-    writer.close()
+    # writer.close()

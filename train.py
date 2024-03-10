@@ -6,8 +6,8 @@ from torch.utils.tensorboard import SummaryWriter
 
 from models import build_model
 from datasets import build_dataloader
-from utils.misc import set_seed, save_checkpoint, load_checkpoint
-from utils.engine import train, evaluate
+from utils.misc import set_seed, create_logger, create_writer, save_checkpoint, load_checkpoint
+from engine import train, evaluate
 
 
 def parse_args():
@@ -26,7 +26,7 @@ def parse_args():
 
     # dataset
     parser.add_argument('--dataset_file', default='dv_fire')
-    parser.add_argument('--dataset_path', default='/home/kuga/Workspace/cocoa-flame/datasets/dv_fire/aedat_to_data/', type=str)
+    parser.add_argument('--dataset_path', default='./datasets/dv_fire/aedat_to_data/', type=str)
     parser.add_argument('--num_workers', default=1, type=int)
 
     # model
@@ -44,6 +44,9 @@ def parse_args():
     # parser.add_argument('--cpkt_name', default='last_checkpoint', type=str)
     parser.add_argument('--checkpoint_epoch', default=50, type=int)
 
+    # logging
+    parser.add_argument('--log_dir', default=None, type=str)
+
     return parser.parse_args()
 
 
@@ -54,11 +57,11 @@ if __name__ == '__main__':
     # fix for reproducibility
     seed = set_seed(args.seed)
 
-    # # create tensor board writer
-    # writer = SummaryWriter(log_dir='./', flush_secs=30)
+    # create tensor board writer
+    writer = create_writer(args.log_dir) if args.log_dir else None
 
     # create logger
-    logger = None
+    logger = create_logger(args.log_dir) if args.log_dir else None
 
     # initialize
     stat = dict(
@@ -87,9 +90,9 @@ if __name__ == '__main__':
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=50, last_epoch=stat['epoch'] - 1)
     # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, args.epochs - stat['epoch'], eta_min=1e-3, last_epoch=stat['epoch'] - 1)
     
-    # Train model
+    # train model
     for epoch in range(stat['epoch'], args.epochs):
-        print(f"Epoch(%d/%s) Learning Rate %s:" % (epoch + 1, args.epochs, optimizer.param_groups[0]['lr']))
+        logger.info(f"Epoch(%d/%s) Learning Rate %s:" % (epoch + 1, args.epochs, optimizer.param_groups[0]['lr']))
         
         # training
         train_result = train(model, criterion=criterion, data_loader=data_loader_train, optimizer=optimizer, scheduler=scheduler)
@@ -98,11 +101,14 @@ if __name__ == '__main__':
         test_result  = evaluate(model, criterion=criterion, data_loader=data_loader_val)
 
         # update
-        # writer.add_scalar('loss', train_result, epoch)
+        if args.log_dir:
+            writer.add_scalar('loss', train_result, epoch)
 
         # if (epoch + 1) % args.checkpoint_epoch == 0:
         #     save_checkpoint(model, stat, checkpoint_dir / "last_checkpoint.pth")
 
         print(train_result)
     
-    # writer.close()
+    # ending
+    if args.log_file:
+        writer.close()
