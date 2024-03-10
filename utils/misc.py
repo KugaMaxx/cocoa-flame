@@ -31,35 +31,46 @@ def set_seed(seed=0):
     return seed
 
 
-def create_logger(log_dir, log_level=logging.INFO):
+def create_logger(log_dir=None, log_level=logging.INFO):
     # create logger with level
     logger = logging.getLogger("Logger")
     logger.setLevel(log_level)
 
-    # check if directory exists
-    path = Path(log_dir)
-    path.mkdir(exist_ok=True)
+    if log_dir is not None:
+        # check if directory exists
+        path = Path(log_dir)
+        path.mkdir(exist_ok=True)
 
-    # set format
-    formatter = logging.Formatter('%(asctime)s  %(levelname)5s  %(message)s')
+        # set format
+        formatter = logging.Formatter('%(asctime)s  %(levelname)5s  %(message)s')
 
-    # create flle handler
-    file_handler = logging.FileHandler(path / f"console.{datetime.now().isoformat()}.log")
-    file_handler.setLevel(log_level)
-    file_handler.setFormatter(formatter)
-    logger.addHandler(file_handler)
+        # create flle handler
+        file_handler = logging.FileHandler(path / f"console.{datetime.now().isoformat()}.log")
+        file_handler.setLevel(log_level)
+        file_handler.setFormatter(formatter)
+        logger.addHandler(file_handler)
 
     return logger
 
 
-def create_writer(log_dir):
-    # check if directory exists
-    path = Path(log_dir)
-    path.mkdir(exist_ok=True)
+def create_writer(log_dir=None):
+    class EmptyWriter(object):
+        def __init__(self, *args, **kwargs) -> None:
+            pass
 
-    # create tensor board writer
-    writer = SummaryWriter(log_dir, flush_secs=30)
-        
+        def __getattr__(self, name):
+            return lambda *args, **kwargs: None
+
+    if log_dir is not None:
+        # check if directory exists
+        path = Path(log_dir)
+        path.mkdir(exist_ok=True)
+
+        # create tensor board writer
+        writer = SummaryWriter(log_dir, flush_secs=30)
+    else:
+        writer = EmptyWriter(log_dir, flush_secs=30)
+            
     return writer
 
 

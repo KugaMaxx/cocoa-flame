@@ -1,13 +1,11 @@
 import argparse
-import numpy as np
 from pathlib import Path
 
 import torch
-from torch.utils.tensorboard import SummaryWriter
 
 from models import build_model
 from datasets import build_dataloader
-from utils.misc import set_seed, save_checkpoint, load_checkpoint
+from utils.misc import set_seed, create_logger, create_writer, save_checkpoint, load_checkpoint
 from engine import train, evaluate
 
 
@@ -19,7 +17,7 @@ def parse_args():
     parser.add_argument('--output_dir', default='./checkpoint', type=str)
     
     # training strategy
-    parser.add_argument('--batch_size', default=8, type=int)
+    parser.add_argument('--batch_size', default=32, type=int)
     parser.add_argument('--epochs', default=300, type=int)
     parser.add_argument('--seed', default=42, type=int)
     parser.add_argument('--weight_decay', default=1e-4, type=float)
@@ -27,8 +25,8 @@ def parse_args():
 
     # dataset
     parser.add_argument('--dataset_file', default='dv_fire')
-    parser.add_argument('--dataset_path', default='/home/kuga/Workspace/aedat_to_dataset/', type=str)
-    parser.add_argument('--num_workers', default=0, type=int)
+    parser.add_argument('--dataset_path', default='./datasets/dv_fire/aedat_to_data/', type=str)
+    parser.add_argument('--num_workers', default=1, type=int)
 
     # model
     parser.add_argument('--model_name', default='point_mlp', type=str)
@@ -45,6 +43,9 @@ def parse_args():
     # parser.add_argument('--cpkt_name', default='last_checkpoint', type=str)
     parser.add_argument('--checkpoint_epoch', default=50, type=int)
 
+    # logging
+    parser.add_argument('--log_dir', default=None, type=str)
+
     return parser.parse_args()
 
 
@@ -53,13 +54,13 @@ if __name__ == '__main__':
     args = parse_args()
 
     # fix for reproducibility
-    seed   = set_seed(args.seed)
+    seed = set_seed(args.seed)
 
-    # # create tensor board writer
-    # writer = SummaryWriter(log_dir='./', flush_secs=30)
+    # create tensor board writer
+    writer = create_writer(args.log_dir) if args.log_dir else None
 
     # create logger
-    logger = None
+    logger = create_logger(args.log_dir) if args.log_dir else None
 
     # initialize
     stat = dict(
@@ -69,7 +70,7 @@ if __name__ == '__main__':
     )
 
     # build dataset
-    data_loader_train = build_dataloader(args, partition='train') 
+    data_loader_train = build_dataloader(args, partition='train')
     data_loader_val   = build_dataloader(args, partition='test')
 
     # build model

@@ -2,7 +2,6 @@ import argparse
 from pathlib import Path
 
 import torch
-from torch.utils.tensorboard import SummaryWriter
 
 from models import build_model
 from datasets import build_dataloader
@@ -58,10 +57,10 @@ if __name__ == '__main__':
     seed = set_seed(args.seed)
 
     # create tensor board writer
-    writer = create_writer(args.log_dir) if args.log_dir else None
+    writer = create_writer(args.log_dir)
 
     # create logger
-    logger = create_logger(args.log_dir) if args.log_dir else None
+    logger = create_logger(args.log_dir)
 
     # initialize
     stat = dict(
