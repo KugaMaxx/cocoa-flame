@@ -57,10 +57,10 @@ if __name__ == '__main__':
     seed = set_seed(args.seed)
 
     # create tensor board writer
-    writer = create_writer(args.log_dir) if args.log_dir else None
+    writer = create_writer(args.log_dir)
 
     # create logger
-    logger = create_logger(args.log_dir) if args.log_dir else None
+    logger = create_logger(args.log_dir)
 
     # initialize
     stat = dict(
@@ -82,13 +82,13 @@ if __name__ == '__main__':
     checkpoint_dir = Path(args.checkpoint_dir)
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     if args.resume:
-        model, stat = load_checkpoint(model, stat, checkpoint_dir / "last_checkpoint.pth")
+        model, stat = load_checkpoint(model, stat, checkpoint_dir / "0229_checkpoint.pth")
 
     # set training strategy
     optimizer = torch.optim.AdamW(model.parameters(), lr=stat['learning_rate'], weight_decay=stat['weight_decay'])
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=50, last_epoch=stat['epoch'] - 1)
-    # scheduler = torch.optim.scheduler.CosineAnnealingLR(optimizer, args.epochs - stat['epoch'], eta_min=1e-3, last_epoch=stat['epoch'] - 1)
-
+    # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, args.epochs - stat['epoch'], eta_min=1e-3, last_epoch=stat['epoch'] - 1)
+    
     # validation
     test_result = evaluate(model, criterion=criterion, data_loader=data_loader_val)
 

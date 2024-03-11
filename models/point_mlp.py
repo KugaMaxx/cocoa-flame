@@ -143,13 +143,12 @@ class PointMLP(nn.Module):
 
         # post processing
         outputs = tuple(
-            {'logits': logits, 'bboxes': bboxes} \
+            self._post_process(logits, bboxes) \
                 for logits, bboxes in zip(outputs_class, outputs_coord)
         )
 
         return outputs
     
-    @torch.no_grad()
     def _pre_process(self, sample):
         if sample['events'] is None:
             points = torch.zeros((self.encrypt_pts, 3))
@@ -172,6 +171,16 @@ class PointMLP(nn.Module):
         else:
             points = torch.cat([points, torch.zeros((self.encrypt_pts - num_points, 3))])
             return points
+        
+    def _post_process(self, logits, bboxes):
+        output = {
+            'logits': logits,
+            'bboxes': bboxes
+        }
+
+        output['scores'], output['labels'] = logits.max(-1)
+
+        return output
 
 
 class DETRLoss(nn.Module):

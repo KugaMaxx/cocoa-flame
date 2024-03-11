@@ -1,4 +1,3 @@
-import os
 import dv_toolkit as kit
 import xml.etree.ElementTree as ET
 

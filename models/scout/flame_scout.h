@@ -43,7 +43,7 @@ public:
     buffer_.add(store);
   }
 
-  std::vector<py::array_t<int32_t>> detect() {
+  std::vector<py::array_t<float_t>> detect() {
     // discharge return
     if (buffer_.isEmpty()) {
       return {{}};
@@ -59,7 +59,7 @@ public:
     RegionSet region_set = findContoursRect(image);
 
     // selective search
-    std::vector<py::array_t<int32_t>> results = selectiveBoundingBox(region_set);
+    std::vector<py::array_t<float_t>> results = selectiveBoundingBox(region_set);
 
     return results;
   }
@@ -144,7 +144,7 @@ private:
     return region_set;
   }
 
-  std::vector<py::array_t<int32_t>> selectiveBoundingBox(RegionSet &region_set) {
+  std::vector<py::array_t<float_t>> selectiveBoundingBox(RegionSet &region_set) {
     // group rectangles by calculate similarity
     for (size_t i = 0; i < region_set.size(); i++) {
       for (size_t j = i + 1; j < region_set.size(); j++) {
@@ -178,10 +178,15 @@ private:
               });
 
     // convert to lists of coordinates
-    std::vector<py::array_t<int32_t>> result;
+    std::vector<py::array_t<float_t>> result;
     for (size_t i = 0; i < rankedRect.size() && i < candidate_num_; i++) {
         auto rect = rankedRect[i].second;
-        std::vector<int32_t> vect = {rect.x, rect.y, rect.width, rect.height};
+        std::vector<float_t> vect = {
+          (float) rect.y / width_, 
+          (float) rect.x / height_, 
+          (float) rect.height / width_,
+          (float) rect.width / height_
+        };
         result.push_back(py::cast(vect));
     }
 

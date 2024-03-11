@@ -70,7 +70,7 @@ if __name__ == '__main__':
     )
 
     # build dataset
-    data_loader_train = build_dataloader(args, partition='train') 
+    data_loader_train = build_dataloader(args, partition='train')
     data_loader_val   = build_dataloader(args, partition='test')
 
     # build model
@@ -100,8 +100,7 @@ if __name__ == '__main__':
         test_result  = evaluate(model, criterion=criterion, data_loader=data_loader_val)
 
         # update
-        if args.log_dir:
-            writer.add_scalar('loss', train_result, epoch)
+        writer.add_scalar('loss', train_result, epoch)
 
         # if (epoch + 1) % args.checkpoint_epoch == 0:
         #     save_checkpoint(model, stat, checkpoint_dir / "last_checkpoint.pth")
@@ -109,5 +108,4 @@ if __name__ == '__main__':
         print(train_result)
     
     # ending
-    if args.log_file:
-        writer.close()
+    writer.close()

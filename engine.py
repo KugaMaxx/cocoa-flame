@@ -5,6 +5,7 @@ from torchvision.ops import box_iou
 from typing import Dict, Iterable
 
 from utils.eval import Evaluator
+from utils.plot import plot_detection_result, plot_projected_events, plot_rescaled_image
 
 
 def train(model: nn.Module, criterion: nn.Module, data_loader: Iterable, 
@@ -55,8 +56,6 @@ def evaluate(model: nn.Module, criterion: nn.Module, data_loader: Iterable):
 
     mean_loss = total_loss / (batch_idx + 1)
 
-    eval.evaluate()
-    eval.accumulate()
     eval.summarize()
 
     return mean_loss
