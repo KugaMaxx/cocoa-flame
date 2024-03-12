@@ -184,7 +184,8 @@ class PointMLP(nn.Module):
 
 
 class DETRLoss(nn.Module):
-    def __init__(self, coef_class=1.0, coef_bbox=1.0, coef_giou=1.0, num_classes=1, eos_coef=0.01):
+    def __init__(self, coef_class=1.0, coef_bbox=5.0, coef_giou=2.0, 
+                 num_classes=1, eos_coef=0.01):
         super().__init__()
         self.coef_class  = coef_class
         self.coef_bbox   = coef_bbox

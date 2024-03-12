@@ -21,12 +21,12 @@ def parse_args():
     parser.add_argument('--epochs', default=300, type=int)
     parser.add_argument('--seed', default=42, type=int)
     parser.add_argument('--weight_decay', default=1e-4, type=float)
-    parser.add_argument('--learning_rate', default=1e-5, type=float)
+    parser.add_argument('--learning_rate', default=1e-4, type=float)
 
     # dataset
+    parser.add_argument('--num_workers', default=1, type=int)
     parser.add_argument('--dataset_file', default='dv_fire')
     parser.add_argument('--dataset_path', default='./datasets/dv_fire/aedat_to_data/', type=str)
-    parser.add_argument('--num_workers', default=1, type=int)
 
     # model
     parser.add_argument('--model_name', default='point_mlp', type=str)
@@ -36,6 +36,11 @@ def parse_args():
     ## local grouper
 
     ## criterion
+    # parser.add_argument('--coef_class', default=1, type=float)
+    # parser.add_argument('--coef_bbox', default=5, type=float)
+    # parser.add_argument('--coef_giou', default=2, type=float)
+    # parser.add_argument('--eos_coef', default=0.1, type=float,
+    #                     help="Relative classification weight of the no-object class")
 
     # checkpoint
     parser.add_argument('--resume', action='store_true')
@@ -44,7 +49,7 @@ def parse_args():
     parser.add_argument('--checkpoint_epoch', default=50, type=int)
 
     # logging
-    parser.add_argument('--log_dir', default=None, type=str)
+    parser.add_argument('--log_dir', default='./logs', type=str)
 
     return parser.parse_args()
 
@@ -102,8 +107,8 @@ if __name__ == '__main__':
         # update
         writer.add_scalar('loss', train_result, epoch)
 
-        # if (epoch + 1) % args.checkpoint_epoch == 0:
-        #     save_checkpoint(model, stat, checkpoint_dir / "last_checkpoint.pth")
+        if (epoch + 1) % args.checkpoint_epoch == 0:
+            save_checkpoint(model, stat, checkpoint_dir / "last_checkpoint.pth")
 
         print(train_result)
     

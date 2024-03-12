@@ -31,18 +31,25 @@ def set_seed(seed=0):
     return seed
 
 
-def create_logger(log_dir=None, log_level=logging.INFO):
+def create_logger(log_dir=None, log_level=logging.DEBUG):
     # create logger with level
-    logger = logging.getLogger("Logger")
+    logger = logging.getLogger(__name__)
     logger.setLevel(log_level)
 
+    # set format
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s: %(message)s')
+    
+    # create stream handler
+    stream_handler = logging.StreamHandler()
+    stream_handler.setLevel(log_level)
+    stream_handler.setFormatter(formatter)
+    logger.addHandler(stream_handler)
+
+    # create file handler
     if log_dir is not None:
         # check if directory exists
         path = Path(log_dir)
         path.mkdir(exist_ok=True)
-
-        # set format
-        formatter = logging.Formatter('%(asctime)s  %(levelname)5s  %(message)s')
 
         # create flle handler
         file_handler = logging.FileHandler(path / f"console.{datetime.now().isoformat()}.log")
@@ -135,36 +142,3 @@ def save_checkpoint(model, stat: Dict, cpkt_path: str):
 #     else:
 #         sys.stdout.write('\n')
 #     sys.stdout.flush()
-
-
-# def format_time(seconds):
-#     days = int(seconds / 3600/24)
-#     seconds = seconds - days*3600*24
-#     hours = int(seconds / 3600)
-#     seconds = seconds - hours*3600
-#     minutes = int(seconds / 60)
-#     seconds = seconds - minutes*60
-#     secondsf = int(seconds)
-#     seconds = seconds - secondsf
-#     millis = int(seconds*1000)
-
-#     f = ''
-#     i = 1
-#     if days > 0:
-#         f += str(days) + 'D'
-#         i += 1
-#     if hours > 0 and i <= 2:
-#         f += str(hours) + 'h'
-#         i += 1
-#     if minutes > 0 and i <= 2:
-#         f += str(minutes) + 'm'
-#         i += 1
-#     if secondsf > 0 and i <= 2:
-#         f += str(secondsf) + 's'
-#         i += 1
-#     if millis > 0 and i <= 2:
-#         f += str(millis) + 'ms'
-#         i += 1
-#     if f == '':
-#         f = '0ms'
-#     return f

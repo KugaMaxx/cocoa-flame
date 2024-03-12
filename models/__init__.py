@@ -12,7 +12,5 @@ def build_model(args):
     if args.model_name == "point_mlp":
         model = PointMLP()
         criterion = DETRLoss()
-        # pre_processor = CocoaSampler()
-        # post_processor = None
 
     return model, criterion
