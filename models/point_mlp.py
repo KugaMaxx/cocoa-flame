@@ -118,10 +118,10 @@ class PointMLP(nn.Module):
         
         # TODO 如果精度不高，可以试试对 last_channels 降维，num_samples 升维，结合 detr 和 pointMLP 的 decoder 部分
         # classification embedding
-        self.class_embed = MLP(last_channels, last_channels, num_classes + 1, num_layers=3)
+        self.class_embed = MLP(last_channels, 16, num_classes + 1, num_layers=3)
 
         # bounding box embedding
-        self.bbox_embed = MLP(last_channels, last_channels, 4, num_layers=3)
+        self.bbox_embed = MLP(last_channels, 16, 4, num_layers=3)
 
     def forward(self, samples):
         # pre processing
@@ -150,6 +150,10 @@ class PointMLP(nn.Module):
         return outputs
     
     def _pre_process(self, sample):
+        # obtain device
+        device = self.dummy_param.device
+
+        # check if sample is empty
         if sample['events'] is None:
             points = torch.zeros((self.encrypt_pts, 3))
             return points
@@ -185,7 +189,7 @@ class PointMLP(nn.Module):
 
 class DETRLoss(nn.Module):
     def __init__(self, coef_class=1.0, coef_bbox=5.0, coef_giou=2.0, 
-                 num_classes=1, eos_coef=0.01):
+                 num_classes=1, eos_coef=0.02):
         super().__init__()
         self.coef_class  = coef_class
         self.coef_bbox   = coef_bbox

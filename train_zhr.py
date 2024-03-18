@@ -3,15 +3,18 @@ from pathlib import Path
 import dv_processing as dv
 import dv_toolkit as kit
 import numpy as np
+import math
 import torch
 import cv2
-from torch.utils.tensorboard import SummaryWriter
-
-from models import build_model
+from sklearn.model_selection import train_test_split
+from sklearn.svm import SVC
+from sklearn import metrics
+from utils.eval import Evaluator
 from datasets import build_dataloader
 from utils.misc import set_seed, save_checkpoint, load_checkpoint
-from engine import train, evaluate
 from models.scout import flame_scout
+from utils.plot import plot_detection_result, plot_projected_events, plot_rescaled_image
+
 
 
 def parse_args():
@@ -55,7 +58,7 @@ def to_do_train(samples, targets):
     results=[]
     for sample, target in zip(samples, targets):
         if sample["events"] is None: 
-            result.append([])
+            results.append([])
 
         # construct events
         else:
@@ -81,17 +84,13 @@ def fill(events):
 
 # 主体边界
 def boundary(border):
-        area = [[0 for x in range(2)] for y in range(500)]
-        j = 0
-        for i in border:
+        area = [[0 for x in range(2)] for y in range(len(border))]
+        for j, i in enumerate(border):
             area[j][0] = cv2.contourArea(i)
             area[j][1] = i
-            j = j + 1
-        i = 0
         area0 = area[0][0]
         border0 = area[0][1]
-        while area[i][0] > 0:
-            i = i + 1
+        for i in range(len(border)):
             if area[i][0] > area0:
                 area0 = area[i][0]
                 border0 = area[i][1]
@@ -147,23 +146,18 @@ def sum_corners(imgRGB_main):
 # 候选框事件输出率
 def event_output(rect,events):
     output=0
+    if events is None:
+            return 0
     for i in events:
-        if (rect[0]<=i[2]<=rect[0]+rect[2] and rect[1]<=i[1]<=rect[1]+rect[3]):
-            output+=1
-    return (output/(rect[2]*rect[3]))
+        if (rect[0]*346<=i[1]<=(rect[0]+rect[2])*346 and rect[1]*260<=i[2]<=(rect[1]+rect[3])*260):
+                output+=1
+    return (output)
 
 # 候选框事件长宽比
 def length_width(rect,events):
-    length=()
-    width=()
-    for i in events:
-        if (rect[0]<=i[2]<=rect[0]+rect[2] and rect[1]<=i[1]<=rect[1]+rect[3]):
-            length=np.append(length,i[1])
-            width=np.append(width,i[2])
-    if (np.max(width)-np.min(width))!=0:
-        return (np.max(length)-np.min(length))/(np.max(width)-np.min(width))
-    else:
+    if events is None:
         return 0
+    return (rect[2]*346/(rect[3]*260))
 
 # 候选框内角点数
 def corner_in_box(rect,img):
@@ -175,9 +169,62 @@ def corner_in_box(rect,img):
     for i in range(len(score_nms)):
         for j in range(len(score_nms[i])):
             if score_nms[i][j]!=0:
-                if(rect[0]<=i<=rect[0]+rect[2] and rect[1]<=j<=rect[1]+rect[3]):
+                if(rect[0]*346<=j<=(rect[0]+rect[2])*346 and rect[1]*260<=i<=(rect[1]+rect[3])*260):
                     num+=1
     return num
+
+# 矩形度
+def rectangularity(rect,events):
+    area=event_output(rect,events)
+    return area/(rect[2]*rect[3]*260*346)
+
+# 圆形度
+def circle(rect,events):
+    matrix2d=np.zeros((260,346))
+    for i in events:
+        if (rect[0]*346<=i[1]<=(rect[0]+rect[2])*346 and rect[1]*260<=i[2]<=(rect[1]+rect[3])*260):
+                matrix2d[i[2]][i[1]]=255
+    contours, hierarchy = cv2.findContours(matrix2d.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    square_main, contours_main = boundary(contours)
+    if square_main==0:
+        return 0
+    length = cv2.arcLength(contours_main, True)
+    roundness=4*math.pi*square_main/(length*length)
+    return roundness
+
+# 训练集标签
+def make_label(boxA,boxB,events):
+    if events is None:
+        return 0
+    tl_x1, tl_y1, w1, h1 = boxA
+    tl_x2, tl_y2, w2, h2 = boxB
+   
+    rb_x1, rb_y1 = tl_x1 + w1, tl_y1 + h1
+    rb_x2, rb_y2 = tl_x2 + w2, tl_y2 + h2
+
+    # 计算交集的坐标
+    x_inter1 = max(tl_x1, tl_x2) #union的左上角x
+    y_inter1 = max(tl_y1, tl_y2) #union的左上角y
+    x_inter2 = min(rb_x1, rb_x2) #union的右下角x
+    y_inter2 = min(rb_y1, rb_y2) #union的右下角y
+
+    # 判断是否相交
+    if x_inter2 < x_inter1 or y_inter2 < y_inter1:
+        iou=0.0  # 框不相交，IOU为0
+    else:
+    # 计算交集部分面积
+        interArea = max(0, x_inter2 - x_inter1) * max(0, y_inter2 - y_inter1)
+
+    # 分别计算两个box的面积
+        area_box1 = w1*h1
+        area_box2 = w2*h2
+
+    #计算IOU，交集比并集，并集面积=两个矩形框面积和-交集面积
+        iou=interArea / (area_box1 + area_box2 - interArea)
+    if iou>0.5:
+       return 1
+    else:
+       return 0
 
 if __name__ == '__main__':
     # parse arguments
@@ -196,22 +243,212 @@ if __name__ == '__main__':
         learning_rate = args.learning_rate,
     )
 
+    print("running")
+
     # build dataset
     data_loader_train = build_dataloader(args, partition='train') 
     data_loader_val   = build_dataloader(args, partition='test')
-    
-    # Train model
-    for epoch in range(stat['epoch'], args.epochs):
 
-        total_loss = 0
-        for batch_idx, (samples, targets) in enumerate(data_loader_train):
-            result = to_do_train(samples, targets)
-            for i in range(len(result)):
-                x_train=[]
-                matrix_init=fill(samples[i]['events'])
-                for n in range(len(result[i])):
-                    # eventoutput=event_output(result[i][n],samples[i]['events'])
-                    # num_corner=corner_in_box(result[i][n],matrix_init.astype(np.uint8))
-                    # len_wid=length_width(result[i][n],samples[i]['events'])
-                    x_train.append([corner_in_box(result[i][n],matrix_init.astype(np.uint8)),event_output(result[i][n],samples[i]['events']),length_width(result[i][n],samples[i]['events'])])
-                breakpoint()
+# new add ------------------------------------------------------------------
+    import torch
+    import dv_processing as dv
+    import dv_toolkit as kit
+    from datetime import timedelta
+    from numpy.lib.recfunctions import structured_to_unstructured
+    fns = []
+    fns_events=[]
+    def to_do_train_wo_label(data):
+        if data['events'].isEmpty():
+            return
+        sample = {
+                  "events": torch.from_numpy(structured_to_unstructured(data['events'].numpy())) \
+                    if not data['events'].isEmpty()  else None,
+                    "frames": torch.from_numpy(data['frames'].front().image) \
+                    if not data['frames'].isEmpty()  else None,
+                  }
+        fns_events.append(sample['events'])
+        model = flame_scout.init((346, 260))
+        model.accept(data['events'])
+        fns.append(model.detect())
+
+
+    # load offline data
+    reader = kit.io.MonoCameraReader(f"./tmp/Pedestrians-ND00-2.aedat4")
+    data, resolution = reader.loadData(), reader.getResolution("events")
+
+   # do every 33ms (cannot modify!)
+    slicer = kit.MonoCameraSlicer()
+    slicer.doEveryTimeInterval("events", timedelta(milliseconds=33), to_do_train_wo_label)
+    slicer.accept(data)
+
+# new add --------------------------------------------------------------------------------------------
+    twofire=[]
+    twofire_events=[]
+    def to_do_train_wo_label_twofire(data):
+        if data['events'].isEmpty():
+            return
+        sample = {
+                  "events": torch.from_numpy(structured_to_unstructured(data['events'].numpy())) \
+                    if not data['events'].isEmpty()  else None,
+                    "frames": torch.from_numpy(data['frames'].front().image) \
+                    if not data['frames'].isEmpty()  else None,
+                  }
+        twofire_events.append(sample['events'])
+        model = flame_scout.init((346, 260))
+        model.accept(data['events'])
+        twofire.append(model.detect())
+    # load offline data
+    reader = kit.io.MonoCameraReader(f"./tmp/S03_C05.aedat4")
+    data, resolution = reader.loadData(), reader.getResolution("events")
+
+   # do every 33ms (cannot modify!)
+    slicer = kit.MonoCameraSlicer()
+    slicer.doEveryTimeInterval("events", timedelta(milliseconds=33), to_do_train_wo_label_twofire)
+    slicer.accept(data)
+#  new add--------------------------------------------------------------------------------------------------
+    fire_people=[]
+    fire_people_events=[]
+    def to_do_train_wo_label_fire_people(data):
+        if data['events'].isEmpty():
+            return
+        sample = {
+                  "events": torch.from_numpy(structured_to_unstructured(data['events'].numpy())) \
+                    if not data['events'].isEmpty()  else None,
+                    "frames": torch.from_numpy(data['frames'].front().image) \
+                    if not data['frames'].isEmpty()  else None,
+                  }
+        fire_people_events.append(sample['events'])
+        model = flame_scout.init((346, 260))
+        model.accept(data['events'])
+        fire_people.append(model.detect())
+    # load offline data
+    reader = kit.io.MonoCameraReader(f"./tmp/Hybrid_02.aedat4")
+    data, resolution = reader.loadData(), reader.getResolution("events")
+
+    # do every 33ms (cannot modify!)
+    slicer = kit.MonoCameraSlicer()
+    slicer.doEveryTimeInterval("events", timedelta(milliseconds=33), to_do_train_wo_label_fire_people)
+    slicer.accept(data)
+# new add----------------------------------------------------------------------------------------------------------
+
+    # 单火焰
+    X=[]
+    Y=[]
+    for batch_idx, (samples, targets) in enumerate(data_loader_train):
+        if batch_idx>12:
+            break
+        result = to_do_train(samples, targets)
+        for i in range(len(result)):
+            matrix_init=fill(samples[i]['events'])
+            X.append([event_output(targets[i]['bboxes'][0],samples[i]['events']),length_width(targets[i]['bboxes'][0],samples[i]['events']),rectangularity(targets[i]['bboxes'][0],samples[i]['events']),circle(targets[i]['bboxes'][0],samples[i]['events']),corner_in_box(targets[i]['bboxes'][0],matrix_init.astype(np.uint8))])
+            Y.append(1)
+    lenY=len(Y)
+    
+    # 双火焰
+    for i,j in enumerate(twofire):
+        if i>=lenY:
+            break
+        matrix_init=fill(twofire_events[i])
+        X.append([event_output(j[0],twofire_events[i]),length_width(j[0],twofire_events[i]),rectangularity(j[0],twofire_events[i]),circle(j[0],twofire_events[i]),corner_in_box(j[0],matrix_init.astype(np.uint8))])
+        Y.append(1)
+    # 运动物体
+    for i,j in enumerate(fns):
+        if j==[]:
+            X.append([0,0,0,0,0])
+            Y.append(0)
+            continue
+        matrix_init=fill(fns_events[i])
+        X.append([event_output(j[0],fns_events[i]),length_width(j[0],fns_events[i]),rectangularity(j[0],fns_events[i]),circle(j[0],fns_events[i]),corner_in_box(j[0],matrix_init.astype(np.uint8))])
+        Y.append(0)
+        if Y.count(0)==Y.count(1):
+            break
+    # train
+    # X_train, X_test, Y_train, Y_test = train_test_split(X, Y, test_size=0.2 , random_state=0,shuffle=True)
+    svm1=SVC(C=1.0,kernel='linear',degree=3,gamma='auto')
+    svm2=SVC(C=1.0,kernel='rbf',degree=3,gamma='auto')
+    svm1.fit(X, Y)
+    svm2.fit(X, Y)
+    # Y_pred1=svm1.predict(X_test)
+    # Y_pred2=svm2.predict(X_test)
+    # print(metrics.accuracy_score(Y_test,Y_pred1))
+    # print(metrics.accuracy_score(Y_test,Y_pred2))
+    
+    # inspect
+    A=[]
+    C=[]
+    for i,j in enumerate(fire_people):
+        if i>=100:
+           break
+        matrix_init=fill(fire_people_events[i])
+        for n in range(len(j)):
+            A.append([event_output(j[n],fire_people_events[i]),length_width(j[n],fire_people_events[i]),rectangularity(j[n],fire_people_events[i]),circle(j[n],fire_people_events[i]),corner_in_box(j[n],matrix_init.astype(np.uint8))])
+            if n==0 or n==1:
+                C.append(1)
+            else:
+                C.append(0)
+    B=svm1.predict(A)
+    print("ending")    
+    breakpoint()
+
+
+
+
+    # Eval
+    
+
+    # total_loss = 0
+    # X=[]
+    # Y=[]
+    # eval = Evaluator(aet_ids=data_loader_train.dataset.aet_ids, 
+    #                  cat_ids=data_loader_train.dataset.cat_ids)
+    # for batch_idx, (samples, targets) in enumerate(data_loader_train):
+    #     outputs=[]
+    #     if batch_idx>30:
+    #         break
+    #     result = to_do_train(samples, targets)
+    #     for i in range(len(result)):
+    #         outputs.append({'bboxes':torch.tensor([result[i][0]]),'labels':torch.tensor([0]),'scores':torch.tensor([1])})
+    #     eval.update(outputs, targets)
+    #     def plot(sample, target, output, i):
+    #         import cv2
+    #         import numpy as np
+    #         image  = np.zeros((260, 346)) if sample['frames'] is None else sample['frames'].numpy()
+    #         events = np.zeros((1, 4))     if sample['events'] is None else sample['events'].numpy()
+
+    #         image = plot_projected_events(image, events)
+    #         image = plot_rescaled_image(image)
+    #         image = plot_detection_result(image, 
+    #                                         bboxes=(target['bboxes']).tolist(),
+    #                                         labels=(target['labels']).tolist(),
+    #                                         colors=[(0, 0, 255)])
+    #         idn = 6
+    #         image = plot_detection_result(image, 
+    #                                         bboxes=output['bboxes'][:idn],
+    #                                         labels=output['labels'][:idn],
+    #                                         scores=output['scores'][:idn],
+    #                                         colors=[(255, 0, 0)])
+    #         cv2.imwrite(f'./result_{i}.png', image)
+    #         return True
+        
+
+    #     if batch_idx == 0:
+    #         results = [plot(sample, target, output, i) \
+    #                    for i, (sample, target, output) in enumerate(zip(samples, targets, outputs))]
+    #         pass
+
+    # eval.summarize()
+    # breakpoint()
+
+            # matrix_init=fill(samples[i]['events'])
+            # if len(result[i])<2:
+            #    random_rect=[np.random.randint(0, 1000)/1000,np.random.randint(0, 1000)/1000,targets[i]['bboxes'][0][2],targets[i]['bboxes'][0][3]]
+            #    X.append([event_output(targets[i]['bboxes'][0],samples[i]['events']),length_width(targets[i]['bboxes'][0],samples[i]['events']),rectangularity(targets[i]['bboxes'][0],samples[i]['events']),corner_in_box(targets[i]['bboxes'][0],matrix_init.astype(np.uint8))])
+            #    X.append([event_output(random_rect,samples[i]['events']),length_width(random_rect,samples[i]['events']),rectangularity(random_rect,samples[i]['events']),corner_in_box(random_rect,matrix_init.astype(np.uint8))])
+            #    Y.append(make_label(targets[i]['bboxes'][0],targets[i]['bboxes'][0],samples[i]['events']))
+            #    Y.append(make_label(random_rect,targets[i]['bboxes'][0],samples[i]['events']))
+            # else:
+            #    X.append([event_output(targets[i]['bboxes'][0],samples[i]['events']),length_width(targets[i]['bboxes'][0],samples[i]['events']),rectangularity(targets[i]['bboxes'][0],samples[i]['events']),corner_in_box(targets[i]['bboxes'][0],matrix_init.astype(np.uint8))])
+            #    X.append([event_output(result[i][1],samples[i]['events']),length_width(result[i][1],samples[i]['events']),rectangularity(result[i][1],samples[i]['events']),corner_in_box(result[i][1],matrix_init.astype(np.uint8))])
+            #    Y.append(make_label(targets[i]['bboxes'][0],targets[i]['bboxes'][0],samples[i]['events']))
+            #    Y.append(make_label(result[i][1],targets[i]['bboxes'][0],samples[i]['events']))
+           

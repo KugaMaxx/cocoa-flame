@@ -1,13 +1,10 @@
 import numpy as np
 
-from typing import Dict, Iterable
+from typing import Dict
 from collections import defaultdict
 
 import torch
 from torchvision.ops import box_iou
-
-from pycocotools.cocoeval import Params
-import pycocotools.mask as maskUtils
 
 
 class Evaluator(object):
@@ -153,7 +150,7 @@ class Evaluator(object):
                     m   = -1
                     for gind, g in enumerate(gt):
                         # if this gt already matched, and not a crowd, continue
-                        if gtm[tind, gind] > 0 and not iscrowd[gind]:
+                        if gtm[tind,gind] > 0 and not iscrowd[gind]:
                             continue
                         # if dt matched to reg gt, and on ignore gt, stop
                         if m > -1 and gtIg[m] == 0 and gtIg[gind] == 1:
@@ -162,7 +159,7 @@ class Evaluator(object):
                         if ious[dind,gind] < iou:
                             continue
                         # if match successful and best so far, store appropriately
-                        iou = ious[dind, gind]
+                        iou = ious[dind,gind]
                         m   = gind
                     # if match made store id of match for both dt and gt
                     if m ==-1:
@@ -206,8 +203,8 @@ class Evaluator(object):
         scores      = -np.ones((T, R, K, A, M))
 
         # retrieve E at each category, area range, and max number of detections
-        for k in range(len(self.cat_ids)):
-            for a in range(len(self.areas)):
+        for k, (cat_name, cat_id) in enumerate(self.cat_ids.items()):
+            for a, (area_name, area_range) in enumerate(self.areas.items()):
                 for m, max_det in enumerate(self.max_det):
                     E = [e for e in self.stats[k, a, :] if not e is None]
                     if len(E) == 0:
@@ -226,17 +223,17 @@ class Evaluator(object):
                     if npig == 0: continue
                     
                     # calculate
-                    tps = np.logical_and(               dtm,  np.logical_not(dtIg) )
-                    fps = np.logical_and(np.logical_not(dtm), np.logical_not(dtIg) )
+                    tps = np.logical_and(               dtm,  np.logical_not(dtIg))
+                    fps = np.logical_and(np.logical_not(dtm), np.logical_not(dtIg))
                     tp_sum = np.cumsum(tps, axis=1).astype(dtype=float)
                     fp_sum = np.cumsum(fps, axis=1).astype(dtype=float)
 
-                    for t, (tp, fp) in enumerate(zip(tp_sum, fp_sum)):
-                        tp = np.array(tp)
-                        fp = np.array(fp)
+                    for t, iou_thr in enumerate(self.iou_thr):
+                        tp = tp_sum[t]
+                        fp = fp_sum[t]
                         nd = len(tp)
                         rc = tp / npig
-                        pr = tp / (fp+tp+np.spacing(1))
+                        pr = tp / (fp + tp + np.spacing(1))
                         q  = np.zeros((R,))
                         ss = np.zeros((R,))
 
@@ -266,7 +263,7 @@ class Evaluator(object):
         self.eval = {
             'counts': [T, R, K, A, M],
             'precision': precision,
-            'recall':   recall,
+            'recall': recall,
             'scores': scores,
         }
 
@@ -354,6 +351,4 @@ if __name__ == '__main__':
     eval = Evaluator(aet_ids={'test00': 0, 'test01': 1, 'test02': 2}, 
                      cat_ids={'fire': 0, 'book': 1, 'dog': 2, 'cat': 3, 'fly': 4, 'brush': 5})
     eval.update(outputs, targets)
-    eval.evaluate()
-    eval.accumulate()
     eval.summarize()

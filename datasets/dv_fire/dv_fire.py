@@ -63,10 +63,6 @@ class DvFire(DatasetBase):
             'resolution': (width, height)
         }
 
-        # if sample['frames'] is not None:
-        #     image = plot_projected_events(sample['frames'].numpy(), sample['events'].numpy())
-        #     plot_detection_result(image, targets['labels'].tolist(), targets['bboxes'].tolist(), [0.32], ['fire'])
-
         return sample, targets
 
     def __len__(self):

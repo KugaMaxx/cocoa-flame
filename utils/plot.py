@@ -93,13 +93,13 @@ def plot_detection_result(bkg_image, bboxes: List, labels: List = None, scores: 
     #                                     labels=(target['labels']).tolist(),
     #                                     colors=[(0, 0, 255)])
         
-    #     idn = (output['labels'] != 1)
+        # idn = (output['labels'] != 1)
 
-    #     image = plot_detection_result(image, 
-    #                                     bboxes=output['bboxes'][idn],
-    #                                     labels=output['labels'][idn],
-    #                                     scores=output['scores'][idn],
-    #                                     colors=[(255, 0, 0)])
+        # image = plot_detection_result(image, 
+        #                                 bboxes=output['bboxes'][idn],
+        #                                 labels=output['labels'][idn],
+        #                                 scores=output['scores'][idn],
+        #                                 colors=[(255, 0, 0)])
 
     #     import cv2
     #     cv2.imwrite('./test.png', image)

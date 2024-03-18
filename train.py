@@ -89,14 +89,19 @@ if __name__ == '__main__':
     if args.resume:
         model, stat = load_checkpoint(model, stat, checkpoint_dir / "last_checkpoint.pth")
 
+    # TODO 并行化后 batch 不会并行，以及_pre_process部分不在同一个device上
+    # # parallel training
+    # if args.device == 'cuda':
+    #     model = torch.nn.DataParallel(model)
+
     # set training strategy
     optimizer = torch.optim.AdamW(model.parameters(), lr=stat['learning_rate'], weight_decay=stat['weight_decay'])
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=50, last_epoch=stat['epoch'] - 1)
-    # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, args.epochs - stat['epoch'], eta_min=1e-3, last_epoch=stat['epoch'] - 1)
+    # scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=50, last_epoch=stat['epoch'] - 1)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, args.epochs - stat['epoch'], eta_min=1e-3, last_epoch=stat['epoch'] - 1)
     
     # train model
     for epoch in range(stat['epoch'], args.epochs):
-        logger.info(f"Epoch(%d/%s) Learning Rate %s:" % (epoch + 1, args.epochs, optimizer.param_groups[0]['lr']))
+        logger.info(f"Epoch({epoch + 1}/{args.epochs}) Learning Rate {optimizer.param_groups[0]['lr']:.2e}")
         
         # training
         train_result = train(model, criterion=criterion, data_loader=data_loader_train, optimizer=optimizer, scheduler=scheduler)
@@ -110,7 +115,7 @@ if __name__ == '__main__':
         if (epoch + 1) % args.checkpoint_epoch == 0:
             save_checkpoint(model, stat, checkpoint_dir / "last_checkpoint.pth")
 
-        print(train_result)
+        logger.info(f"Loss: Training {train_result} Testing {test_result}")
     
     # ending
     writer.close()
