@@ -1,5 +1,5 @@
+import time
 import argparse
-from pathlib import Path
 import dv_processing as dv
 import dv_toolkit as kit
 import numpy as np
@@ -11,7 +11,7 @@ from sklearn.svm import SVC
 from sklearn import metrics
 from utils.eval import Evaluator
 from datasets import build_dataloader
-from utils.misc import set_seed, save_checkpoint, load_checkpoint
+from utils.misc import set_seed
 from models.scout import flame_scout
 from utils.plot import plot_detection_result, plot_projected_events, plot_rescaled_image
 
@@ -77,24 +77,18 @@ def fill(events):
     matrix2d = np.zeros((260, 346))
     if events is None:
         return matrix2d
-    else:
-        for i in events:
-           matrix2d[i[2]][i[1]]=255
-        return matrix2d
+    matrix2d[events[:,2],events[:,1]]=255
+    return matrix2d
 
 # 主体边界
 def boundary(border):
-        area = [[0 for x in range(2)] for y in range(len(border))]
-        for j, i in enumerate(border):
-            area[j][0] = cv2.contourArea(i)
-            area[j][1] = i
-        area0 = area[0][0]
-        border0 = area[0][1]
-        for i in range(len(border)):
-            if area[i][0] > area0:
-                area0 = area[i][0]
-                border0 = area[i][1]
-        return area0, border0
+    area0 = cv2.contourArea(border[0])
+    border0 = border[0]
+    for j, i in enumerate(border):
+        if cv2.contourArea(i)>area0:
+            area0 = cv2.contourArea(i)
+            border0 = i
+    return area0, border0
 
 # 膨胀腐蚀保留主体(暂时不需要)
 def solve(matrix2d,events):
@@ -143,21 +137,29 @@ def sum_corners(imgRGB_main):
     cv2.imwrite('./out.png',img)
     return num_corners
 
+def expand(rect):
+    minx=rect[0]*346
+    width=rect[2]*346
+    miny=rect[1]*260
+    height=rect[3]*260
+    return [minx,miny,width,height]
+
 # 候选框事件输出率
 def event_output(rect,events):
-    output=0
     if events is None:
             return 0
-    for i in events:
-        if (rect[0]*346<=i[1]<=(rect[0]+rect[2])*346 and rect[1]*260<=i[2]<=(rect[1]+rect[3])*260):
-                output+=1
+    output=0
+    idx = np.logical_and(events[:, 1] >=rect[0], events[:, 1] <= (rect[0]+rect[2]))
+    idy = np.logical_and(events[:,2]>=rect[1],events[:,2]<=(rect[1]+rect[3]))
+    id = np.logical_and(idx,idy)
+    output = id.sum() 
     return (output)
 
 # 候选框事件长宽比
 def length_width(rect,events):
     if events is None:
         return 0
-    return (rect[2]*346/(rect[3]*260))
+    return (rect[2]/(rect[3]))
 
 # 候选框内角点数
 def corner_in_box(rect,img):
@@ -165,25 +167,29 @@ def corner_in_box(rect,img):
     dst1 = dst.copy()
     dst1[dst <= 0.01 * dst.max()] = 0
     score_nms = corner_nms(dst1) 
-    num=0
-    for i in range(len(score_nms)):
-        for j in range(len(score_nms[i])):
-            if score_nms[i][j]!=0:
-                if(rect[0]*346<=j<=(rect[0]+rect[2])*346 and rect[1]*260<=i<=(rect[1]+rect[3])*260):
-                    num+=1
+    score_num=score_nms[int(rect[1]+1):int(rect[1]+rect[3]),int(rect[0]+1):int(rect[0]+rect[2])]
+    num=np.sum(score_num!=0)
     return num
 
 # 矩形度
 def rectangularity(rect,events):
-    area=event_output(rect,events)
-    return area/(rect[2]*rect[3]*260*346)
+    matrix2d=np.zeros((260,346))
+    mask=matrix2d.copy()
+    matrix2d[events[:,2],events[:,1]]=255
+    mask[int(rect[1]+1):int(rect[1]+rect[3]),int(rect[0]+1):int(rect[0]+rect[2])]=1
+    matrix2d=matrix2d*mask
+    contours, hierarchy = cv2.findContours(matrix2d.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    contourarea=list(map(cv2.contourArea,contours))
+    area=np.sum(contourarea)
+    return area/(rect[2]*rect[3])
 
 # 圆形度
 def circle(rect,events):
     matrix2d=np.zeros((260,346))
-    for i in events:
-        if (rect[0]*346<=i[1]<=(rect[0]+rect[2])*346 and rect[1]*260<=i[2]<=(rect[1]+rect[3])*260):
-                matrix2d[i[2]][i[1]]=255
+    mask=matrix2d.copy()
+    matrix2d[events[:,2],events[:,1]]=255
+    mask[int(rect[1]+1):int(rect[1]+rect[3]),int(rect[0]+1):int(rect[0]+rect[2])]=1
+    matrix2d=matrix2d*mask
     contours, hierarchy = cv2.findContours(matrix2d.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     square_main, contours_main = boundary(contours)
     if square_main==0:
@@ -191,6 +197,55 @@ def circle(rect,events):
     length = cv2.arcLength(contours_main, True)
     roundness=4*math.pi*square_main/(length*length)
     return roundness
+
+# 面积变化率
+def areachange(rect,events):
+    area1,area2,area3=0,0,0
+    # 参考 event_output
+
+    # 对齐时间
+    timestamps = events[:, 0] - events[0, 0]
+    ids = np.searchsorted(timestamps, [11000, 22000])
+
+    # 按索引分割
+    events1 = events[0:ids[0], :]
+    events2 = events[ids[0]:ids[1], :]
+    events3 = events[ids[1]:, :]
+
+    for i in events:
+        if i[0]-events[0][0]<11000:
+            if (rect[0]*346<=i[1]<=(rect[0]+rect[2])*346 and rect[1]*260<=i[2]<=(rect[1]+rect[3])*260):
+                 area1+=1
+        elif 11000<=i[0]-events[0][0]<22000:
+            if (rect[0]*346<=i[1]<=(rect[0]+rect[2])*346 and rect[1]*260<=i[2]<=(rect[1]+rect[3])*260):
+                area2+=1
+        else:
+            if (rect[0]*346<=i[1]<=(rect[0]+rect[2])*346 and rect[1]*260<=i[2]<=(rect[1]+rect[3])*260):
+                 area3+=1
+    return (area3-area1)*3/(area1+area2+area3)
+
+# 形心移动
+def move(rect,events):
+    num1,num3=0,0,
+    sumx1,sumy1,sumx3,sumy3=0,0,0,0
+    for i in events:
+        if i[0]-events[0][0]<11000:
+            if (rect[0]*346<=i[1]<=(rect[0]+rect[2])*346 and rect[1]*260<=i[2]<=(rect[1]+rect[3])*260):
+                 num1+=1
+                 sumx1+=i[1]
+                 sumy1+=i[2]
+        elif i[0]-events[0][0]>=22000:
+            if (rect[0]*346<=i[1]<=(rect[0]+rect[2])*346 and rect[1]*260<=i[2]<=(rect[1]+rect[3])*260):
+                num3+=1
+                sumx3+=i[1]
+                sumy3+=i[2]
+    if num1==0 or num3==0:
+        return 0
+    return math.sqrt(math.pow((sumx3/num3-sumx1/num1),2)+math.pow((sumy3/num3-sumy1/num1),2))
+
+# 傅里叶频闪
+def fourier(rect,events):
+    pass
 
 # 训练集标签
 def make_label(boxA,boxB,events):
@@ -273,7 +328,7 @@ if __name__ == '__main__':
 
 
     # load offline data
-    reader = kit.io.MonoCameraReader(f"./tmp/Pedestrians-ND00-2.aedat4")
+    reader = kit.io.MonoCameraReader(f"./tmp/UAV-ND00-2.aedat4")
     data, resolution = reader.loadData(), reader.getResolution("events")
 
    # do every 33ms (cannot modify!)
@@ -288,7 +343,7 @@ if __name__ == '__main__':
         if data['events'].isEmpty():
             return
         sample = {
-                  "events": torch.from_numpy(structured_to_unstructured(data['events'].numpy())) \
+                    "events": torch.from_numpy(structured_to_unstructured(data['events'].numpy())) \
                     if not data['events'].isEmpty()  else None,
                     "frames": torch.from_numpy(data['frames'].front().image) \
                     if not data['frames'].isEmpty()  else None,
@@ -306,87 +361,92 @@ if __name__ == '__main__':
     slicer.doEveryTimeInterval("events", timedelta(milliseconds=33), to_do_train_wo_label_twofire)
     slicer.accept(data)
 #  new add--------------------------------------------------------------------------------------------------
-    fire_people=[]
-    fire_people_events=[]
-    def to_do_train_wo_label_fire_people(data):
-        if data['events'].isEmpty():
-            return
-        sample = {
-                  "events": torch.from_numpy(structured_to_unstructured(data['events'].numpy())) \
-                    if not data['events'].isEmpty()  else None,
-                    "frames": torch.from_numpy(data['frames'].front().image) \
-                    if not data['frames'].isEmpty()  else None,
-                  }
-        fire_people_events.append(sample['events'])
-        model = flame_scout.init((346, 260))
-        model.accept(data['events'])
-        fire_people.append(model.detect())
-    # load offline data
-    reader = kit.io.MonoCameraReader(f"./tmp/Hybrid_02.aedat4")
-    data, resolution = reader.loadData(), reader.getResolution("events")
+    # fire_people=[]
+    # fire_people_events=[]
+    # def to_do_train_wo_label_fire_people(data):
+    #     if data['events'].isEmpty():
+    #         return
+    #     sample = {
+    #               "events": torch.from_numpy(structured_to_unstructured(data['events'].numpy())) \
+    #                 if not data['events'].isEmpty()  else None,
+    #                 "frames": torch.from_numpy(data['frames'].front().image) \
+    #                 if not data['frames'].isEmpty()  else None,
+    #               }
+    #     fire_people_events.append(sample['events'])
+    #     model = flame_scout.init((346, 260))
+    #     model.accept(data['events'])
+    #     fire_people.append(model.detect())
+    # # load offline data
+    # reader = kit.io.MonoCameraReader(f"./tmp/Hybrid_02.aedat4")
+    # data, resolution = reader.loadData(), reader.getResolution("events")
 
-    # do every 33ms (cannot modify!)
-    slicer = kit.MonoCameraSlicer()
-    slicer.doEveryTimeInterval("events", timedelta(milliseconds=33), to_do_train_wo_label_fire_people)
-    slicer.accept(data)
+    # # do every 33ms (cannot modify!)
+    # slicer = kit.MonoCameraSlicer()
+    # slicer.doEveryTimeInterval("events", timedelta(milliseconds=33), to_do_train_wo_label_fire_people)
+    # slicer.accept(data)
 # new add----------------------------------------------------------------------------------------------------------
 
     # 单火焰
     X=[]
     Y=[]
+    st = time.time()
     for batch_idx, (samples, targets) in enumerate(data_loader_train):
-        if batch_idx>12:
+        if batch_idx>15:
             break
         result = to_do_train(samples, targets)
-        for i in range(len(result)):
+        for i,j in enumerate(result):
             matrix_init=fill(samples[i]['events'])
-            X.append([event_output(targets[i]['bboxes'][0],samples[i]['events']),length_width(targets[i]['bboxes'][0],samples[i]['events']),rectangularity(targets[i]['bboxes'][0],samples[i]['events']),circle(targets[i]['bboxes'][0],samples[i]['events']),corner_in_box(targets[i]['bboxes'][0],matrix_init.astype(np.uint8))])
+            tar=expand(targets[i]['bboxes'][0])
+            X.append([event_output(tar,samples[i]['events']),length_width(tar,samples[i]['events']),rectangularity(tar,samples[i]['events']),circle(tar,samples[i]['events']),corner_in_box(tar,matrix_init.astype(np.uint8))])
             Y.append(1)
     lenY=len(Y)
+    print(f"单火焰推理时间：{time.time() - st}")
     
     # 双火焰
     for i,j in enumerate(twofire):
         if i>=lenY:
             break
         matrix_init=fill(twofire_events[i])
-        X.append([event_output(j[0],twofire_events[i]),length_width(j[0],twofire_events[i]),rectangularity(j[0],twofire_events[i]),circle(j[0],twofire_events[i]),corner_in_box(j[0],matrix_init.astype(np.uint8))])
+        X.append([event_output(j[0],twofire_events[i]),length_width(j[0],twofire_events[i]),rectangularity(j[0],twofire_events[i]),circle(j[0],twofire_events[i]),corner_in_box(j[0],matrix_init.astype(np.uint8)),areachange(j[0],twofire_events[i]),move(j[0],twofire_events[i])])
         Y.append(1)
+   
     # 运动物体
     for i,j in enumerate(fns):
+        if Y.count(0)==Y.count(1):
+            break
         if j==[]:
-            X.append([0,0,0,0,0])
+            X.append([0,0,0,0,0,0,0])
             Y.append(0)
             continue
         matrix_init=fill(fns_events[i])
-        X.append([event_output(j[0],fns_events[i]),length_width(j[0],fns_events[i]),rectangularity(j[0],fns_events[i]),circle(j[0],fns_events[i]),corner_in_box(j[0],matrix_init.astype(np.uint8))])
+        X.append([event_output(j[0],fns_events[i]),length_width(j[0],fns_events[i]),rectangularity(j[0],fns_events[i]),circle(j[0],fns_events[i]),corner_in_box(j[0],matrix_init.astype(np.uint8)),areachange(j[0],fns_events[i]),move(j[0],fns_events[i])])
         Y.append(0)
-        if Y.count(0)==Y.count(1):
-            break
+        
     # train
-    # X_train, X_test, Y_train, Y_test = train_test_split(X, Y, test_size=0.2 , random_state=0,shuffle=True)
+    X_train, X_test, Y_train, Y_test = train_test_split(X, Y, test_size=0.2 , random_state=0,shuffle=True)
     svm1=SVC(C=1.0,kernel='linear',degree=3,gamma='auto')
     svm2=SVC(C=1.0,kernel='rbf',degree=3,gamma='auto')
-    svm1.fit(X, Y)
-    svm2.fit(X, Y)
-    # Y_pred1=svm1.predict(X_test)
-    # Y_pred2=svm2.predict(X_test)
-    # print(metrics.accuracy_score(Y_test,Y_pred1))
-    # print(metrics.accuracy_score(Y_test,Y_pred2))
+    svm1.fit(X_train, Y_train)
+    svm2.fit(X_train, Y_train)
+    Y_pred1=svm1.predict(X_test)
+    Y_pred2=svm2.predict(X_test)
+    print(metrics.accuracy_score(Y_test,Y_pred1))
+    print(metrics.accuracy_score(Y_test,Y_pred2))
     
     # inspect
-    A=[]
-    C=[]
-    for i,j in enumerate(fire_people):
-        if i>=100:
-           break
-        matrix_init=fill(fire_people_events[i])
-        for n in range(len(j)):
-            A.append([event_output(j[n],fire_people_events[i]),length_width(j[n],fire_people_events[i]),rectangularity(j[n],fire_people_events[i]),circle(j[n],fire_people_events[i]),corner_in_box(j[n],matrix_init.astype(np.uint8))])
-            if n==0 or n==1:
-                C.append(1)
-            else:
-                C.append(0)
-    B=svm1.predict(A)
+    # A=[]
+    # C=[]
+    # for i,j in enumerate(fire_people):
+    #     if i>=100:
+    #        break
+    #     matrix_init=fill(fire_people_events[i])
+    #     for n in range(len(j)):
+    #         A.append([event_output(j[n],fire_people_events[i]),length_width(j[n],fire_people_events[i]),rectangularity(j[n],fire_people_events[i]),circle(j[n],fire_people_events[i]),corner_in_box(j[n],matrix_init.astype(np.uint8))])
+    #         if n==0 or n==1:
+    #             C.append(1)
+    #         else:
+    #             C.append(0)
+    # B=svm1.predict(A)
     print("ending")    
     breakpoint()
 
