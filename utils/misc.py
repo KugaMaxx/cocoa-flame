@@ -60,6 +60,10 @@ def create_logger(log_dir=None, log_level=logging.DEBUG):
     return logger
 
 
+def load_logger():
+    return logging.getLogger(__name__)
+
+
 def create_writer(log_dir=None):
     class EmptyWriter(object):
         def __init__(self, *args, **kwargs) -> None:

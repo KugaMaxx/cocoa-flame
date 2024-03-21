@@ -1,6 +1,6 @@
 import numpy as np
 
-from typing import Dict
+from typing import Dict, List
 from collections import defaultdict
 
 import torch
@@ -8,24 +8,26 @@ from torchvision.ops import box_iou
 
 
 class Evaluator(object):
-    def __init__(self, aet_ids: Dict = None, cat_ids: Dict = None):
+    def __init__(self, aet_ids: Dict = None, cat_ids: Dict = None,
+                 max_dets:  List = [1, 10, 100],
+                 area_rngs: Dict = {
+                     'all':    [0 ** 2, 1e5 ** 2],
+                     'small':  [0 ** 2, 32 ** 2],
+                     'medium': [32 ** 2, 96 ** 2],
+                     'large':  [96 ** 2, 1e5 ** 2]
+                 }):
         # parameters
-        self.aet_ids = aet_ids
-        self.cat_ids = cat_ids
-        self.areas = {
-            'all':    [0 ** 2, 1e5 ** 2],
-            'small':  [0 ** 2, 16 ** 2],
-            'medium': [16 ** 2, 32 ** 2],
-            'large':  [32 ** 2, 1e5 ** 2]
-        }
-        self.max_det = [1, 10, 100]
+        self.aet_ids   = aet_ids
+        self.cat_ids   = cat_ids
+        self.max_dets  = max_dets
+        self.area_rngs = area_rngs
         self.iou_thr = np.linspace(.5, 0.95, int(np.round((0.95 - .5) / .05)) + 1, endpoint=True)
         self.rec_thr = np.linspace(.0, 1.00, int(np.round((1.00 - .0) / .01)) + 1, endpoint=True)
 
         # statistic members
-        self.stats = None
-        self.eval = None
-        self.ious = dict()
+        self._eval  = None
+        self._ious  = None
+        self._stats = None
         self._gts = defaultdict(list)
         self._dts = defaultdict(list)
 
@@ -72,31 +74,34 @@ class Evaluator(object):
                 })
 
     def _evaluate(self):
+        """
+        Run per image evaluation on given images and store results (a list of dict)
+        """
+        def _compute_iou(aet_id, cat_id):
+            gt = self._gts[aet_id, cat_id]
+            dt = self._dts[aet_id, cat_id]
+            
+            if len(gt) == 0 or len(dt) == 0:
+                return []
+
+            return box_iou(torch.tensor([d['bbox'] for d in dt]),
+                           torch.tensor([g['bbox'] for g in gt])).numpy()
+        
         # calculate iou
-        self.ious = {
-            (aet_id, cat_id): self._compute_iou(aet_id, cat_id) \
+        self._ious = {
+            (aet_id, cat_id): _compute_iou(aet_id, cat_id) \
                 for aet_id in self.aet_ids.values()
                 for cat_id in self.cat_ids.values()
         }
 
         # evaluate
-        maxDet = self.max_det[-1]
-        self.stats = np.asarray([
+        maxDet = self.max_dets[-1]
+        self._stats = np.asarray([
             self._evaluate_each(aet_id, cat_id, area, maxDet) \
                 for cat_id in self.cat_ids.values()
-                for area   in self.areas.values()
+                for area   in self.area_rngs.values()
                 for aet_id in self.aet_ids.values()
-        ]).reshape(len(self.cat_ids), len(self.areas), len(self.aet_ids))
-
-    def _compute_iou(self, aet_id, cat_id):
-        gt = self._gts[aet_id, cat_id]
-        dt = self._dts[aet_id, cat_id]
-        
-        if len(gt) == 0 or len(dt) == 0:
-            return []
-
-        return box_iou(torch.tensor([d['bbox'] for d in dt]),
-                       torch.tensor([g['bbox'] for g in gt])).numpy()
+        ]).reshape(len(self.cat_ids), len(self.area_rngs), len(self.aet_ids))
 
     def _evaluate_each(self, imgId, catId, aRng, maxDet):
         '''
@@ -125,10 +130,10 @@ class Evaluator(object):
         iscrowd = [int(o['iscrowd']) for o in gt]
 
         # load computed ious
-        if len(self.ious[imgId, catId]) > 0:
-            ious = self.ious[imgId, catId][:, gtind]
+        if len(self._ious[imgId,catId]) > 0:
+            ious = self._ious[imgId,catId][:, gtind]
         else:
-            ious = self.ious[imgId, catId]
+            ious = self._ious[imgId,catId]
 
         if len(dt) > 0 and len(gt) > 0:
             pass
@@ -170,7 +175,7 @@ class Evaluator(object):
         
         # set unmatched detections outside of area range to ignore
         a = np.array([d['area'] < aRng[0] or d['area'] > aRng[1] for d in dt]).reshape((1, len(dt)))
-        dtIg = np.logical_or(dtIg, np.logical_and(dtm==0, np.repeat(a,T,0)))
+        dtIg = np.logical_or(dtIg, np.logical_and(dtm==0, np.repeat(a, T, 0)))
         
         # store results for given image and category
         return {
@@ -189,24 +194,23 @@ class Evaluator(object):
         '''
         Accumulate per image evaluation results and store the result in self.eval
         '''
-        print('Accumulating evaluation results...')
-        assert self.stats is not None, "Please run evaluate() first."
+        assert self._stats is not None, "Please run evaluate() first."
 
         # initialize        
         T           = len(self.iou_thr)
         R           = len(self.rec_thr)
         K           = len(self.cat_ids)
-        A           = len(self.areas)
-        M           = len(self.max_det)
+        A           = len(self.area_rngs)
+        M           = len(self.max_dets)
         precision   = -np.ones((T, R, K, A, M)) # -1 for the precision of absent categories
         recall      = -np.ones((T, K, A, M))
         scores      = -np.ones((T, R, K, A, M))
 
         # retrieve E at each category, area range, and max number of detections
         for k, (cat_name, cat_id) in enumerate(self.cat_ids.items()):
-            for a, (area_name, area_range) in enumerate(self.areas.items()):
-                for m, max_det in enumerate(self.max_det):
-                    E = [e for e in self.stats[k, a, :] if not e is None]
+            for a, (area_name, area_range) in enumerate(self.area_rngs.items()):
+                for m, max_det in enumerate(self.max_dets):
+                    E = [e for e in self._stats[k, a, :] if not e is None]
                     if len(E) == 0:
                         continue
                     dtScores = np.concatenate([e['dtScores'][0:max_det] for e in E])
@@ -260,7 +264,7 @@ class Evaluator(object):
                         precision[t,:,k,a,m] = np.array(q)
                         scores[t,:,k,a,m] = np.array(ss)
 
-        self.eval = {
+        self._eval = {
             'counts': [T, R, K, A, M],
             'precision': precision,
             'recall': recall,
@@ -273,17 +277,12 @@ class Evaluator(object):
         Note this functin can *only* be applied on the default parameter setting
         '''
         def _summarize(ap=1, iouThr=None, areaRng='all', maxDets=100):
-            # intialize string
-            iStr     = ' {:<18} {} @ [ IoU = {:<9} | area = {:>6s} | maxDets = {:>3d} ] = {:0.3f}'
-            titleStr = 'Average Precision' if ap == 1 else 'Average Recall'
-            typeStr  = '(AP)' if ap==1 else '(AR)'
-            iouStr   = f'{self.iou_thr[0]:0.2f}:{self.iou_thr[-1]:0.2f}' if iouThr is None else f'{iouThr:0.2f}'
-
-            aind = [i for i, aRng in enumerate(self.areas.keys()) if aRng == areaRng]
-            mind = [i for i, mDet in enumerate(self.max_det) if mDet == maxDets]
+            # summarize
+            aind = [i for i, aRng in enumerate(self.area_rngs.keys()) if aRng == areaRng]
+            mind = [i for i, mDet in enumerate(self.max_dets) if mDet == maxDets]
             if ap == 1:
                 # dimension of precision: [T x R x K x A x M]
-                s = self.eval['precision']
+                s = self._eval['precision']
                 # IoU
                 if iouThr is not None:
                     t = np.where(iouThr == self.iou_thr)[0]
@@ -291,7 +290,7 @@ class Evaluator(object):
                 s = s[:,:,:,aind,mind]
             else:
                 # dimension of recall: [T x K x A x M]
-                s = self.eval['recall']
+                s = self._eval['recall']
                 if iouThr is not None:
                     t = np.where(iouThr == self.iou_thr)[0]
                     s = s[t]
@@ -300,8 +299,15 @@ class Evaluator(object):
                 mean_s = -1
             else:
                 mean_s = np.mean(s[s>-1])
-            print(iStr.format(titleStr, typeStr, iouStr, areaRng, maxDets, mean_s))
-            return mean_s
+
+            # format string
+            title = 'Average Precision' if ap == 1 else 'Average Recall'
+            type  = '(AP)' if ap==1 else '(AR)'
+            iou   = f'{self.iou_thr[0]:0.2f}:{self.iou_thr[-1]:0.2f}' if iouThr is None else f'{iouThr:0.2f}'
+            
+            info = f'{title:<18} {type} @ [ IoU = {iou:<9} | area = {areaRng:>6s} | maxDets = {maxDets:>3d} ]'
+
+            return {info: mean_s}
 
         # evaluate
         self._evaluate()
@@ -310,19 +316,21 @@ class Evaluator(object):
         self._accumulate()
 
         # get summaries
-        stats = np.zeros((12,))
-        stats[0] = _summarize(1)
-        stats[1] = _summarize(1, iouThr=.5, maxDets=self.max_det[2])
-        stats[2] = _summarize(1, iouThr=.75, maxDets=self.max_det[2])
-        stats[3] = _summarize(1, areaRng='small', maxDets=self.max_det[2])
-        stats[4] = _summarize(1, areaRng='medium', maxDets=self.max_det[2])
-        stats[5] = _summarize(1, areaRng='large', maxDets=self.max_det[2])
-        stats[6] = _summarize(0, maxDets=self.max_det[0])
-        stats[7] = _summarize(0, maxDets=self.max_det[1])
-        stats[8] = _summarize(0, maxDets=self.max_det[2])
-        stats[9] = _summarize(0, areaRng='small', maxDets=self.max_det[2])
-        stats[10] = _summarize(0, areaRng='medium', maxDets=self.max_det[2])
-        stats[11] = _summarize(0, areaRng='large', maxDets=self.max_det[2])
+        stats = dict()
+        stats.update(_summarize(1))
+        stats.update(_summarize(1, iouThr=.5, maxDets=self.max_dets[2]))
+        stats.update(_summarize(1, iouThr=.75, maxDets=self.max_dets[2]))
+        stats.update(_summarize(1, areaRng='small', maxDets=self.max_dets[2]))
+        stats.update(_summarize(1, areaRng='medium', maxDets=self.max_dets[2]))
+        stats.update(_summarize(1, areaRng='large', maxDets=self.max_dets[2]))
+        stats.update(_summarize(0, maxDets=self.max_dets[0]))
+        stats.update(_summarize(0, maxDets=self.max_dets[1]))
+        stats.update(_summarize(0, maxDets=self.max_dets[2]))
+        stats.update(_summarize(0, areaRng='small', maxDets=self.max_dets[2]))
+        stats.update(_summarize(0, areaRng='medium', maxDets=self.max_dets[2]))
+        stats.update(_summarize(0, areaRng='large', maxDets=self.max_dets[2]))
+
+        return stats
 
 
 if __name__ == '__main__':
