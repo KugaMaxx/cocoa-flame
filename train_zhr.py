@@ -173,14 +173,7 @@ def corner_in_box(rect,img):
 
 # 矩形度
 def rectangularity(rect,events):
-    matrix2d=np.zeros((260,346))
-    mask=matrix2d.copy()
-    matrix2d[events[:,2],events[:,1]]=255
-    mask[int(rect[1]+1):int(rect[1]+rect[3]),int(rect[0]+1):int(rect[0]+rect[2])]=1
-    matrix2d=matrix2d*mask
-    contours, hierarchy = cv2.findContours(matrix2d.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    contourarea=list(map(cv2.contourArea,contours))
-    area=np.sum(contourarea)
+    area=square(rect,events)
     return area/(rect[2]*rect[3])
 
 # 圆形度
@@ -198,49 +191,62 @@ def circle(rect,events):
     roundness=4*math.pi*square_main/(length*length)
     return roundness
 
+# 计算框内面积
+def square(rect,events):
+    matrix2d=np.zeros((260,346))
+    mask=matrix2d.copy()
+    matrix2d[events[:,2],events[:,1]]=255
+    mask[int(rect[1]+1):int(rect[1]+rect[3]),int(rect[0]+1):int(rect[0]+rect[2])]=1
+    matrix2d=matrix2d*mask
+    contours, hierarchy = cv2.findContours(matrix2d.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    area=np.sum(list(map(cv2.contourArea,contours)))
+    return area
+
 # 面积变化率
 def areachange(rect,events):
-    area1,area2,area3=0,0,0
-    # 参考 event_output
-
     # 对齐时间
     timestamps = events[:, 0] - events[0, 0]
     ids = np.searchsorted(timestamps, [11000, 22000])
-
     # 按索引分割
     events1 = events[0:ids[0], :]
     events2 = events[ids[0]:ids[1], :]
     events3 = events[ids[1]:, :]
-
-    for i in events:
-        if i[0]-events[0][0]<11000:
-            if (rect[0]*346<=i[1]<=(rect[0]+rect[2])*346 and rect[1]*260<=i[2]<=(rect[1]+rect[3])*260):
-                 area1+=1
-        elif 11000<=i[0]-events[0][0]<22000:
-            if (rect[0]*346<=i[1]<=(rect[0]+rect[2])*346 and rect[1]*260<=i[2]<=(rect[1]+rect[3])*260):
-                area2+=1
-        else:
-            if (rect[0]*346<=i[1]<=(rect[0]+rect[2])*346 and rect[1]*260<=i[2]<=(rect[1]+rect[3])*260):
-                 area3+=1
+    area1=square(rect,events1)
+    area2=square(rect,events2)
+    area3=square(rect,events3)
+    # 有改动的时候会出现这个圆
     return (area3-area1)*3/(area1+area2+area3)
 
+def dict_list(contour):
+    return list(cv2.moments(contour).values())
 # 形心移动
 def move(rect,events):
-    num1,num3=0,0,
-    sumx1,sumy1,sumx3,sumy3=0,0,0,0
-    for i in events:
-        if i[0]-events[0][0]<11000:
-            if (rect[0]*346<=i[1]<=(rect[0]+rect[2])*346 and rect[1]*260<=i[2]<=(rect[1]+rect[3])*260):
-                 num1+=1
-                 sumx1+=i[1]
-                 sumy1+=i[2]
-        elif i[0]-events[0][0]>=22000:
-            if (rect[0]*346<=i[1]<=(rect[0]+rect[2])*346 and rect[1]*260<=i[2]<=(rect[1]+rect[3])*260):
-                num3+=1
-                sumx3+=i[1]
-                sumy3+=i[2]
+    timestamps = events[:, 0] - events[0, 0]
+    ids = np.searchsorted(timestamps, [11000, 22000])
+    events1 = events[0:ids[0], :]
+    events3 = events[ids[1]:, :]
+    matrix2d1=np.zeros((260,346))
+    matrix2d3=matrix2d1.copy()
+    mask=matrix2d1.copy()
+    mask[int(rect[1]+1):int(rect[1]+rect[3]),int(rect[0]+1):int(rect[0]+rect[2])]=1
+    matrix2d1[events1[:,2],events1[:,1]]=255
+    matrix2d3[events3[:,2],events3[:,1]]=255
+    matrix2d1=matrix2d1*mask
+    matrix2d3=matrix2d3*mask
+    num1=np.sum(matrix2d1)/255
+    num3=np.sum(matrix2d3)/255
     if num1==0 or num3==0:
         return 0
+    contours1, hierarchy1 = cv2.findContours(matrix2d1.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    contours3, hierarchy = cv2.findContours(matrix2d3.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    moment1=list(map(dict_list,contours1))
+    moment3=list(map(dict_list,contours3))
+    moment1=torch.tensor(moment1)
+    moment3=torch.tensor(moment3)
+    sumx1=moment1[:,1].sum()/moment1[:,0].sum()
+    sumx3=moment3[:,1].sum()/moment3[:,0].sum()
+    sumy1=moment1[:,2].sum()/moment1[:,0].sum()
+    sumy3=moment3[:,2].sum()/moment3[:,0].sum()
     return math.sqrt(math.pow((sumx3/num3-sumx1/num1),2)+math.pow((sumy3/num3-sumy1/num1),2))
 
 # 傅里叶频闪
@@ -397,7 +403,7 @@ if __name__ == '__main__':
         for i,j in enumerate(result):
             matrix_init=fill(samples[i]['events'])
             tar=expand(targets[i]['bboxes'][0])
-            X.append([event_output(tar,samples[i]['events']),length_width(tar,samples[i]['events']),rectangularity(tar,samples[i]['events']),circle(tar,samples[i]['events']),corner_in_box(tar,matrix_init.astype(np.uint8))])
+            X.append([event_output(tar,samples[i]['events']),length_width(tar,samples[i]['events']),rectangularity(tar,samples[i]['events']),circle(tar,samples[i]['events']),corner_in_box(tar,matrix_init.astype(np.uint8)),areachange(tar,samples[i]['events']),move(tar,samples[i]['events'])])
             Y.append(1)
     lenY=len(Y)
     print(f"单火焰推理时间：{time.time() - st}")
@@ -407,7 +413,8 @@ if __name__ == '__main__':
         if i>=lenY:
             break
         matrix_init=fill(twofire_events[i])
-        X.append([event_output(j[0],twofire_events[i]),length_width(j[0],twofire_events[i]),rectangularity(j[0],twofire_events[i]),circle(j[0],twofire_events[i]),corner_in_box(j[0],matrix_init.astype(np.uint8)),areachange(j[0],twofire_events[i]),move(j[0],twofire_events[i])])
+        tar=expand(j[0])
+        X.append([event_output(tar,twofire_events[i]),length_width(tar,twofire_events[i]),rectangularity(tar,twofire_events[i]),circle(tar,twofire_events[i]),corner_in_box(tar,matrix_init.astype(np.uint8)),areachange(tar,twofire_events[i]),move(tar,twofire_events[i])])
         Y.append(1)
    
     # 运动物体
@@ -419,7 +426,8 @@ if __name__ == '__main__':
             Y.append(0)
             continue
         matrix_init=fill(fns_events[i])
-        X.append([event_output(j[0],fns_events[i]),length_width(j[0],fns_events[i]),rectangularity(j[0],fns_events[i]),circle(j[0],fns_events[i]),corner_in_box(j[0],matrix_init.astype(np.uint8)),areachange(j[0],fns_events[i]),move(j[0],fns_events[i])])
+        tar=expand(j[0])
+        X.append([event_output(tar,fns_events[i]),length_width(tar,fns_events[i]),rectangularity(tar,fns_events[i]),circle(tar,fns_events[i]),corner_in_box(tar,matrix_init.astype(np.uint8)),areachange(tar,fns_events[i]),move(tar,fns_events[i])])
         Y.append(0)
         
     # train
