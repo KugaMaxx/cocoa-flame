@@ -125,18 +125,7 @@ def corner_nms(corner, kernal=5):
                     out[r, c] = 0
         return out
 
-# 角点总数
-def sum_corners(imgRGB_main):
-    dst = cv2.cornerHarris(src=imgRGB_main, blockSize=2, ksize=3, k=0.04)
-    dst1 = dst.copy()
-    dst1[dst <= 0.01 * dst.max()] = 0
-    score_nms = corner_nms(dst1)
-    num_corners = np.sum(score_nms != 0)
-    img=cv2.cvtColor(imgRGB_main, cv2.COLOR_GRAY2RGB)
-    img[score_nms != 0]=(0,0,255)
-    cv2.imwrite('./out.png',img)
-    return num_corners
-
+# 归一化还原
 def expand(rect):
     minx=rect[0]*346
     width=rect[2]*346
@@ -144,45 +133,51 @@ def expand(rect):
     height=rect[3]*260
     return [minx,miny,width,height]
 
-# 候选框事件输出率
-def event_output(rect,events):
-    if events is None:
-            return 0
-    output=0
+# 检测框范围内提取
+def judge(rect,events):
     idx = np.logical_and(events[:, 1] >=rect[0], events[:, 1] <= (rect[0]+rect[2]))
     idy = np.logical_and(events[:,2]>=rect[1],events[:,2]<=(rect[1]+rect[3]))
     id = np.logical_and(idx,idy)
-    output = id.sum() 
+    events=events[id==1]
+    return events
+
+# 事件输出率
+def event_output(events):
+    output = len(events) 
     return (output)
 
-# 候选框事件长宽比
+# 事件长宽比
 def length_width(rect,events):
     if events is None:
         return 0
     return (rect[2]/(rect[3]))
 
-# 候选框内角点数
-def corner_in_box(rect,img):
+# 角点数
+def corner_in_box(img):
     dst = cv2.cornerHarris(src=img, blockSize=2, ksize=3, k=0.04)
     dst1 = dst.copy()
     dst1[dst <= 0.01 * dst.max()] = 0
     score_nms = corner_nms(dst1) 
-    score_num=score_nms[int(rect[1]+1):int(rect[1]+rect[3]),int(rect[0]+1):int(rect[0]+rect[2])]
-    num=np.sum(score_num!=0)
+    num=np.sum(score_nms!=0)
     return num
+
+# 计算面积
+def square(events):
+    matrix2d=np.zeros((260,346))
+    matrix2d[events[:,2],events[:,1]]=255
+    contours, hierarchy = cv2.findContours(matrix2d.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    area=np.sum(list(map(cv2.contourArea,contours)))
+    return area
 
 # 矩形度
 def rectangularity(rect,events):
-    area=square(rect,events)
+    area=square(events)
     return area/(rect[2]*rect[3])
 
 # 圆形度
-def circle(rect,events):
+def circle(events):
     matrix2d=np.zeros((260,346))
-    mask=matrix2d.copy()
     matrix2d[events[:,2],events[:,1]]=255
-    mask[int(rect[1]+1):int(rect[1]+rect[3]),int(rect[0]+1):int(rect[0]+rect[2])]=1
-    matrix2d=matrix2d*mask
     contours, hierarchy = cv2.findContours(matrix2d.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     square_main, contours_main = boundary(contours)
     if square_main==0:
@@ -191,19 +186,8 @@ def circle(rect,events):
     roundness=4*math.pi*square_main/(length*length)
     return roundness
 
-# 计算框内面积
-def square(rect,events):
-    matrix2d=np.zeros((260,346))
-    mask=matrix2d.copy()
-    matrix2d[events[:,2],events[:,1]]=255
-    mask[int(rect[1]+1):int(rect[1]+rect[3]),int(rect[0]+1):int(rect[0]+rect[2])]=1
-    matrix2d=matrix2d*mask
-    contours, hierarchy = cv2.findContours(matrix2d.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    area=np.sum(list(map(cv2.contourArea,contours)))
-    return area
-
 # 面积变化率
-def areachange(rect,events):
+def areachange(events):
     # 对齐时间
     timestamps = events[:, 0] - events[0, 0]
     ids = np.searchsorted(timestamps, [11000, 22000])
@@ -211,31 +195,27 @@ def areachange(rect,events):
     events1 = events[0:ids[0], :]
     events2 = events[ids[0]:ids[1], :]
     events3 = events[ids[1]:, :]
-    area1=square(rect,events1)
-    area2=square(rect,events2)
-    area3=square(rect,events3)
+    area1=square(events1)
+    area2=square(events2)
+    area3=square(events3)
     # 有改动的时候会出现这个圆
     return (area3-area1)*3/(area1+area2+area3)
 
+# 字典转列表
 def dict_list(contour):
     return list(cv2.moments(contour).values())
+
 # 形心移动
-def move(rect,events):
+def move(events):
     timestamps = events[:, 0] - events[0, 0]
     ids = np.searchsorted(timestamps, [11000, 22000])
     events1 = events[0:ids[0], :]
     events3 = events[ids[1]:, :]
     matrix2d1=np.zeros((260,346))
     matrix2d3=matrix2d1.copy()
-    mask=matrix2d1.copy()
-    mask[int(rect[1]+1):int(rect[1]+rect[3]),int(rect[0]+1):int(rect[0]+rect[2])]=1
     matrix2d1[events1[:,2],events1[:,1]]=255
     matrix2d3[events3[:,2],events3[:,1]]=255
-    matrix2d1=matrix2d1*mask
-    matrix2d3=matrix2d3*mask
-    num1=np.sum(matrix2d1)/255
-    num3=np.sum(matrix2d3)/255
-    if num1==0 or num3==0:
+    if np.sum(matrix2d1)==0 or np.sum(matrix2d3)==0:
         return 0
     contours1, hierarchy1 = cv2.findContours(matrix2d1.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     contours3, hierarchy = cv2.findContours(matrix2d3.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -247,7 +227,8 @@ def move(rect,events):
     sumx3=moment3[:,1].sum()/moment3[:,0].sum()
     sumy1=moment1[:,2].sum()/moment1[:,0].sum()
     sumy3=moment3[:,2].sum()/moment3[:,0].sum()
-    return math.sqrt(math.pow((sumx3/num3-sumx1/num1),2)+math.pow((sumy3/num3-sumy1/num1),2))
+    return math.sqrt(math.pow((sumx3-sumx1),2)+math.pow((sumy3-sumy1),2))
+
 
 # 傅里叶频闪
 def fourier(rect,events):
@@ -401,45 +382,66 @@ if __name__ == '__main__':
             break
         result = to_do_train(samples, targets)
         for i,j in enumerate(result):
-            matrix_init=fill(samples[i]['events'])
             tar=expand(targets[i]['bboxes'][0])
-            X.append([event_output(tar,samples[i]['events']),length_width(tar,samples[i]['events']),rectangularity(tar,samples[i]['events']),circle(tar,samples[i]['events']),corner_in_box(tar,matrix_init.astype(np.uint8)),areachange(tar,samples[i]['events']),move(tar,samples[i]['events'])])
+            events_inbox=judge(tar,samples[i]['events'])
+            matrix_init=fill(events_inbox)
+            X.append([event_output(events_inbox),
+                      length_width(tar,events_inbox),
+                      rectangularity(tar,events_inbox),
+                      circle(events_inbox),
+                      corner_in_box(matrix_init.astype(np.uint8)),
+                      areachange(events_inbox),
+                      move(events_inbox)])
             Y.append(1)
     lenY=len(Y)
     print(f"单火焰推理时间：{time.time() - st}")
     
-    # 双火焰
-    for i,j in enumerate(twofire):
-        if i>=lenY:
-            break
-        matrix_init=fill(twofire_events[i])
-        tar=expand(j[0])
-        X.append([event_output(tar,twofire_events[i]),length_width(tar,twofire_events[i]),rectangularity(tar,twofire_events[i]),circle(tar,twofire_events[i]),corner_in_box(tar,matrix_init.astype(np.uint8)),areachange(tar,twofire_events[i]),move(tar,twofire_events[i])])
-        Y.append(1)
+    # # 双火焰
+    # for i,j in enumerate(twofire):
+    #     if i>=lenY:
+    #         break
+    #     tar=expand(j[0])
+    #     events_inbox=judge(tar,twofire_events[i])
+    #     matrix_init=fill(events_inbox)
+    #     X.append([event_output(events_inbox),
+    #               length_width(tar,events_inbox),
+    #               rectangularity(tar,events_inbox),
+    #               circle(events_inbox),
+    #               corner_in_box(matrix_init.astype(np.uint8)),
+    #               areachange(events_inbox),
+    #               move(events_inbox)])
+    #     Y.append(1)
    
-    # 运动物体
-    for i,j in enumerate(fns):
-        if Y.count(0)==Y.count(1):
-            break
-        if j==[]:
-            X.append([0,0,0,0,0,0,0])
-            Y.append(0)
-            continue
-        matrix_init=fill(fns_events[i])
-        tar=expand(j[0])
-        X.append([event_output(tar,fns_events[i]),length_width(tar,fns_events[i]),rectangularity(tar,fns_events[i]),circle(tar,fns_events[i]),corner_in_box(tar,matrix_init.astype(np.uint8)),areachange(tar,fns_events[i]),move(tar,fns_events[i])])
-        Y.append(0)
+    # # 运动物体
+    # for i,j in enumerate(fns):
+    #     if Y.count(0)==Y.count(1):
+    #         break
+    #     if j==[]:
+    #         X.append([0,0,0,0,0,0,0])
+    #         Y.append(0)
+    #         continue
+    #     tar=expand(j[0])
+    #     events_inbox=judge(tar,fns_events[i])
+    #     matrix_init=fill(events_inbox)
+    #     X.append([event_output(events_inbox),
+    #               length_width(tar,events_inbox),
+    #               rectangularity(tar,events_inbox),
+    #               circle(events_inbox),
+    #               corner_in_box(matrix_init.astype(np.uint8)),
+    #               areachange(events_inbox),
+    #               move(events_inbox)])
+    #     Y.append(0)
         
-    # train
-    X_train, X_test, Y_train, Y_test = train_test_split(X, Y, test_size=0.2 , random_state=0,shuffle=True)
-    svm1=SVC(C=1.0,kernel='linear',degree=3,gamma='auto')
-    svm2=SVC(C=1.0,kernel='rbf',degree=3,gamma='auto')
-    svm1.fit(X_train, Y_train)
-    svm2.fit(X_train, Y_train)
-    Y_pred1=svm1.predict(X_test)
-    Y_pred2=svm2.predict(X_test)
-    print(metrics.accuracy_score(Y_test,Y_pred1))
-    print(metrics.accuracy_score(Y_test,Y_pred2))
+    # # train
+    # X_train, X_test, Y_train, Y_test = train_test_split(X, Y, test_size=0.2 , random_state=0,shuffle=True)
+    # svm1=SVC(C=1.0,kernel='linear',degree=3,gamma='auto')
+    # svm2=SVC(C=1.0,kernel='rbf',degree=3,gamma='auto')
+    # svm1.fit(X_train, Y_train)
+    # svm2.fit(X_train, Y_train)
+    # Y_pred1=svm1.predict(X_test)
+    # Y_pred2=svm2.predict(X_test)
+    # print(metrics.accuracy_score(Y_test,Y_pred1))
+    # print(metrics.accuracy_score(Y_test,Y_pred2))
     
     # inspect
     # A=[]
