@@ -21,7 +21,9 @@ def set_seed(seed=0):
 
     # set torch seed
     torch.manual_seed(seed)
-    if seed == 0:  # slower, more reproducible
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    if seed != 0:  # slower, more reproducible
         torch.backends.cudnn.benchmark = False
         torch.backends.cudnn.deterministic = True
     else:  # faster, less reproducible
