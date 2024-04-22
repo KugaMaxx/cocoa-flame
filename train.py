@@ -18,7 +18,7 @@ def parse_args():
     
     # training strategy
     parser.add_argument('--batch_size', default=32, type=int)
-    parser.add_argument('--epochs', default=300, type=int)
+    parser.add_argument('--epochs', default=600, type=int)
     parser.add_argument('--seed', default=42, type=int)
     parser.add_argument('--weight_decay', default=1e-4, type=float)
     parser.add_argument('--learning_rate', default=1e-4, type=float)
@@ -26,7 +26,7 @@ def parse_args():
     # dataset
     parser.add_argument('--num_workers', default=1, type=int)
     parser.add_argument('--dataset_file', default='dv_fire')
-    parser.add_argument('--dataset_path', default='./datasets/dv_fire/aedat_to_data/', type=str)
+    parser.add_argument('--dataset_path', default='./datasets/dv_fire/', type=str)
 
     # model
     parser.add_argument('--model_name', default='point_mlp', type=str)
@@ -67,11 +67,16 @@ if __name__ == '__main__':
     # create logger
     logger = create_logger(args.log_dir)
 
-    # initialize
+    # initialize statistics
     stat = dict(
-        epoch = 0, args = args,
+        # arguments
+        args = args,
+        # strategy
+        epoch = 0,
         weight_decay  = args.weight_decay,
         learning_rate = args.learning_rate,
+        # metrics
+        mAP = 0.0, mAP_50 = 0.0, mAP_75 = 0.0
     )
 
     # build dataset
@@ -89,33 +94,32 @@ if __name__ == '__main__':
     if args.resume:
         model, stat = load_checkpoint(model, stat, checkpoint_dir / "last_checkpoint.pth")
 
-    # TODO 并行化后 batch 不会并行，以及_pre_process部分不在同一个device上
-    # # parallel training
-    # if args.device == 'cuda':
-    #     model = torch.nn.DataParallel(model)
-
     # set training strategy
     optimizer = torch.optim.AdamW(model.parameters(), lr=stat['learning_rate'], weight_decay=stat['weight_decay'])
-    # scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=50, last_epoch=stat['epoch'] - 1)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, args.epochs - stat['epoch'], eta_min=1e-3, last_epoch=stat['epoch'] - 1)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=600, last_epoch=stat['epoch'] - 1)
+    # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, args.epochs - stat['epoch'], eta_min=1e-3, last_epoch=stat['epoch'] - 1)
     
     # train model
-    for epoch in range(stat['epoch'], args.epochs):
+    for epoch in range(0, args.epochs):
         logger.info(f"Epoch({epoch + 1}/{args.epochs}) Learning Rate {optimizer.param_groups[0]['lr']:.2e}")
         
         # training
         train_result = train(model, criterion=criterion, data_loader=data_loader_train, optimizer=optimizer, scheduler=scheduler)
         
         # validation
-        test_result  = evaluate(model, criterion=criterion, data_loader=data_loader_val)
+        test_result = evaluate(model, criterion=criterion, data_loader=data_loader_val)
 
         # update
-        writer.add_scalar('loss', train_result, epoch)
+        writer.add_scalar('loss', train_result['mean_loss'], epoch)
 
-        if (epoch + 1) % args.checkpoint_epoch == 0:
+        if test_result['mAP_50'] > stat['mAP_50']:
+            logger.info("best acc, saving...")
+            stat['mAP_50'] = test_result['mAP_50']
+            save_checkpoint(model, stat, checkpoint_dir / "best_checkpoint.pth")
+        elif (epoch + 1) % args.checkpoint_epoch == 0:
             save_checkpoint(model, stat, checkpoint_dir / "last_checkpoint.pth")
 
-        logger.info(f"Loss: Training {train_result} Testing {test_result}")
+        logger.info(f"Loss: Training {train_result['mean_loss']:.2f} Testing {test_result['mean_loss']:.2f}")
     
     # ending
     writer.close()

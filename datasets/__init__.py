@@ -1,6 +1,6 @@
 import torch
 from torch.utils.data import DataLoader
-from torch.utils.data import RandomSampler, SequentialSampler, BatchSampler
+from torch.utils.data import RandomSampler, SequentialSampler, BatchSampler, DistributedSampler
 
 from .dv_fire.dv_fire import DvFire
 
@@ -24,10 +24,15 @@ def build_dataloader(args, partition):
     )
 
     if partition == 'train':
+        # TODO ddp
+        # sampler = DistributedSampler(dataset) if args.distributed else RandomSampler(dataset)
         sampler = RandomSampler(dataset)
         batch_sampler = BatchSampler(sampler, args.batch_size, drop_last=True)
     elif partition == 'test':
-        sampler = SequentialSampler(dataset)
+        # sampler = SequentialSampler(dataset)
+        # TODO ddp
+        # sampler = DistributedSampler(dataset) if args.distributed else RandomSampler(dataset)
+        sampler = RandomSampler(dataset)
         batch_sampler = BatchSampler(sampler, args.batch_size, drop_last=False)
     
     data_loader = DataLoader(dataset=dataset, collate_fn=collate_fn, 

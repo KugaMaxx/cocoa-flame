@@ -25,7 +25,7 @@ def parse_args():
 
     # dataset
     parser.add_argument('--dataset_file', default='dv_fire')
-    parser.add_argument('--dataset_path', default='./datasets/dv_fire/aedat_to_data/', type=str)
+    parser.add_argument('--dataset_path', default='./datasets/dv_fire/', type=str)
     parser.add_argument('--num_workers', default=1, type=int)
 
     # model
@@ -82,7 +82,7 @@ if __name__ == '__main__':
     checkpoint_dir = Path(args.checkpoint_dir)
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     if args.resume:
-        model, stat = load_checkpoint(model, stat, checkpoint_dir / "0229_checkpoint.pth")
+        model, stat = load_checkpoint(model, stat, checkpoint_dir / "best_checkpoint.pth")
 
     # set training strategy
     optimizer = torch.optim.AdamW(model.parameters(), lr=stat['learning_rate'], weight_decay=stat['weight_decay'])

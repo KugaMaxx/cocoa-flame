@@ -307,7 +307,7 @@ class Evaluator(object):
             
             info = f'{title:<18} {type} @ [ IoU = {iou:<9} | area = {areaRng:>6s} | maxDets = {maxDets:>3d} ]'
 
-            return {info: mean_s}
+            return info, mean_s
 
         # evaluate
         self._evaluate()
@@ -316,19 +316,19 @@ class Evaluator(object):
         self._accumulate()
 
         # get summaries
-        stats = dict()
-        stats.update(_summarize(1))
-        stats.update(_summarize(1, iouThr=.5, maxDets=self.max_dets[2]))
-        stats.update(_summarize(1, iouThr=.75, maxDets=self.max_dets[2]))
-        stats.update(_summarize(1, areaRng='small', maxDets=self.max_dets[2]))
-        stats.update(_summarize(1, areaRng='medium', maxDets=self.max_dets[2]))
-        stats.update(_summarize(1, areaRng='large', maxDets=self.max_dets[2]))
-        stats.update(_summarize(0, maxDets=self.max_dets[0]))
-        stats.update(_summarize(0, maxDets=self.max_dets[1]))
-        stats.update(_summarize(0, maxDets=self.max_dets[2]))
-        stats.update(_summarize(0, areaRng='small', maxDets=self.max_dets[2]))
-        stats.update(_summarize(0, areaRng='medium', maxDets=self.max_dets[2]))
-        stats.update(_summarize(0, areaRng='large', maxDets=self.max_dets[2]))
+        stats = list()
+        stats.append(_summarize(1))
+        stats.append(_summarize(1, iouThr=.5, maxDets=self.max_dets[2]))
+        stats.append(_summarize(1, iouThr=.75, maxDets=self.max_dets[2]))
+        stats.append(_summarize(1, areaRng='small', maxDets=self.max_dets[2]))
+        stats.append(_summarize(1, areaRng='medium', maxDets=self.max_dets[2]))
+        stats.append(_summarize(1, areaRng='large', maxDets=self.max_dets[2]))
+        stats.append(_summarize(0, maxDets=self.max_dets[0]))
+        stats.append(_summarize(0, maxDets=self.max_dets[1]))
+        stats.append(_summarize(0, maxDets=self.max_dets[2]))
+        stats.append(_summarize(0, areaRng='small', maxDets=self.max_dets[2]))
+        stats.append(_summarize(0, areaRng='medium', maxDets=self.max_dets[2]))
+        stats.append(_summarize(0, areaRng='large', maxDets=self.max_dets[2]))
 
         return stats
 

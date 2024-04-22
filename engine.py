@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-from torchvision.ops import box_iou
 
 from typing import Dict, Iterable
 
@@ -32,22 +31,22 @@ def train(model: nn.Module, criterion: nn.Module, data_loader: Iterable,
 
     # one epoch step
     scheduler.step()
-    mean_loss = total_loss / (batch_idx + 1)
+    # criterion.temperature = criterion.temperature - 0.0002
 
-    return mean_loss
+    return {
+        'mean_loss': total_loss / (batch_idx + 1),
+    }
 
 
 @torch.no_grad()
 def evaluate(model: nn.Module, criterion: nn.Module, data_loader: Iterable):
+    # eval = Evaluator(aet_ids=data_loader.dataset.aet_ids, 
+    #                  cat_ids=data_loader.dataset.cat_ids)
     eval = Evaluator(aet_ids=data_loader.dataset.aet_ids, 
-                     cat_ids=data_loader.dataset.cat_ids)
+                     cat_ids={'fire': 0})
 
     total_loss = 0
     for batch_idx, (samples, targets) in enumerate(data_loader):
-        # # TODO ready to delete
-        # if batch_idx != 0: continue
-        # # TODO ready to delete
-
         # set models and criterion to evaluate
         model.eval()
         criterion.eval()
@@ -55,6 +54,8 @@ def evaluate(model: nn.Module, criterion: nn.Module, data_loader: Iterable):
         # inference
         outputs = model(samples)
         loss = criterion(outputs, targets)
+
+        # one batch step
         total_loss += loss.item()
 
         # keep only predictions with greater than 0.7 confidence
@@ -76,18 +77,17 @@ def evaluate(model: nn.Module, criterion: nn.Module, data_loader: Iterable):
         #     image = plot_projected_events(image, events)
         #     image = plot_rescaled_image(image)
         #     image = plot_detection_result(image, 
-        #                                     bboxes=(target['bboxes']).tolist(),
-        #                                     labels=(target['labels']).tolist(),
-        #                                     colors=[(0, 0, 255)])
+        #                                   bboxes=(target['bboxes']).tolist(),
+        #                                   labels=(target['labels']).tolist(),
+        #                                   colors=[(0, 0, 255)])
             
         #     image = plot_detection_result(image, 
-        #                                     bboxes=output['bboxes'],
-        #                                     labels=output['labels'],
-        #                                     scores=output['scores'],
-        #                                     colors=[(255, 0, 0)])
+        #                                   bboxes=output['bboxes'],
+        #                                   labels=output['labels'],
+        #                                   scores=output['scores'],
+        #                                   colors=[(255, 0, 0)])
         #     cv2.imwrite(f'./result_{i}.png', image)
         #     return True
-
 
         # if batch_idx == 0:
         #     results = [plot(sample, target, output, i) \
@@ -96,11 +96,13 @@ def evaluate(model: nn.Module, criterion: nn.Module, data_loader: Iterable):
         #     break
         # # TODO ready to delete
 
-    mean_loss = total_loss / (batch_idx + 1)
-
     # evaluation
     stats = eval.summarize()
     logger = load_logger()
-    logger.info('\n' + '\n'.join(f'{key}: {value}' for key, value in stats.items()))
+    logger.info('\n' + '\n'.join(f'{info}: {value:.3f}' for info, value in stats))
 
-    return mean_loss
+    return {
+        'mean_loss': total_loss / (batch_idx + 1),
+        'mAP': stats[0][1], 
+        'mAP_50': stats[1][1]
+    }

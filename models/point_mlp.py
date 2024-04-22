@@ -3,10 +3,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from scipy.optimize import linear_sum_assignment
+from torchvision.ops.boxes import generalized_box_iou, _box_xywh_to_xyxy
 
 from models.common import MLP, ResidualBlock, LocalGrouper
 from models.common import get_activation, get_points_by_index
-from utils.boxes import generalized_box_iou, box_cxcywh_to_xyxy
 
 
 class ExtractionBlock(nn.Module):
@@ -83,7 +83,7 @@ class ExtractionBlock(nn.Module):
 
 
 class PointMLP(nn.Module):
-    def __init__(self, encrypt_dim=64, dim_expansion=2, encrypt_pts=1024, pts_reducer=2, 
+    def __init__(self, encrypt_dim=8, dim_expansion=2, encrypt_pts=1024, pts_reducer=2, 
                  num_layers=4, num_classes=1, **kwargs):
         super().__init__()
         self.encrypt_dim = encrypt_dim
@@ -138,7 +138,7 @@ class PointMLP(nn.Module):
         feat = feat.permute(0, 2, 1)
 
         # predictor
-        outputs_class = F.softmax(self.class_embed(feat), dim=2)
+        outputs_class = self.class_embed(feat)
         outputs_coord = self.bbox_embed(feat).sigmoid()
 
         # post processing
@@ -146,6 +146,9 @@ class PointMLP(nn.Module):
             self._post_process(logits, bboxes) \
                 for logits, bboxes in zip(outputs_class, outputs_coord)
         )
+
+        for f, output in zip(feat, outputs):
+            output['feats'] = f
 
         return outputs
     
@@ -182,19 +185,21 @@ class PointMLP(nn.Module):
             'bboxes': bboxes
         }
 
-        output['scores'], output['labels'] = logits.max(-1)
+        output['scores'], output['labels'] = logits.softmax(-1).max(-1)
 
         return output
 
 
 class DETRLoss(nn.Module):
     def __init__(self, coef_class=1.0, coef_bbox=5.0, coef_giou=2.0, 
-                 num_classes=1, eos_coef=0.02):
+                 num_classes=1, eos_coef=0.1):
         super().__init__()
         self.coef_class  = coef_class
         self.coef_bbox   = coef_bbox
         self.coef_giou   = coef_giou
         self.num_classes = num_classes
+
+        self.temperature = 0.1
 
         empty_weight = torch.ones(self.num_classes + 1)
         empty_weight[-1] = eos_coef
@@ -203,10 +208,19 @@ class DETRLoss(nn.Module):
     def forward(self, outputs, targets):
         # align type of device between outputs and targets
         device = next(iter(outputs[0].values())).device
-        targets = [
-            {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in t.items()} \
-                for t in targets
-        ]
+
+        def _align(t):
+            idn = t['labels'] < self.num_classes
+            t['labels'] = t['labels'][idn].to(device)
+            t['bboxes'] = t['bboxes'][idn].to(device)
+            return t
+        
+        targets = [_align(t) for t in targets]
+
+        # targets = [
+        #     {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in t.items()} \
+        #         for t in targets
+        # ]
 
         # run Hungarian matcher
         indices   = self._hungarian_matcher(outputs, targets)
@@ -224,6 +238,22 @@ class DETRLoss(nn.Module):
         tgt_boxes = torch.cat([tgt['bboxes'][i] for tgt, (_, i) in zip(targets, indices)], dim=0)
 
         # calculate classification loss
+        # # TODO try 1
+        # loss_class = F.cross_entropy(out_logits.transpose(1, 2), tgt_labels, self.empty_weight.to(device), reduction='none')
+        # loss_class = ((1 - torch.exp(-loss_class)) ** 2.0 * loss_class).mean()
+
+        # # TODO try 2
+        # loss_class = F.cross_entropy(out_logits.transpose(1, 2), tgt_labels, reduction='none')
+
+        # gamma = 0.2
+        # alpha = torch.zeros(tgt_labels.shape).to(device)
+        # alpha[tgt_labels==1] = 0.1
+        # alpha[tgt_labels==0] = 1
+
+        # loss_class = (alpha * (1 - torch.exp(-loss_class)) ** gamma * loss_class)        
+        # # loss_class = alpha * loss_class
+        # loss_class = loss_class.mean()
+
         loss_class = F.cross_entropy(out_logits.transpose(1, 2), tgt_labels, self.empty_weight.to(device))
         loss_class = self.coef_class * loss_class.sum()
 
@@ -232,19 +262,46 @@ class DETRLoss(nn.Module):
         loss_bbox = self.coef_bbox * loss_bbox.sum()
 
         # calculate generalized iou loss
-        loss_giou = 1 - torch.diag(generalized_box_iou(box_cxcywh_to_xyxy(out_boxes), 
-                                                       box_cxcywh_to_xyxy(tgt_boxes)))
+        loss_giou = 1 - torch.diag(generalized_box_iou(_box_xywh_to_xyxy(out_boxes), 
+                                                       _box_xywh_to_xyxy(tgt_boxes)))
         loss_giou = self.coef_giou * loss_giou.sum()
 
+        # TODO 把所有 logits 检查一遍
+        loss_neg = 0
+        for i, output in enumerate(outputs):
+            out_feats = output['feats']
+            
+            # compute postive
+            query = out_feats[out_idx[i]].unsqueeze(dim=0)
+            query = F.normalize(query, dim=-1)
+            positive_logit = torch.sum(query * query, dim=1, keepdim=True)
+
+            # compute negative
+            negative_keys = torch.cat([out_feats[:out_idx[i]], out_feats[out_idx[i]+1:]])
+            negative_keys = F.normalize(negative_keys, dim=-1)
+            negative_logits = query @ negative_keys.transpose(-2, -1)
+
+            # 计算正样本和负样本之间的余弦相似度
+            logits = torch.cat([positive_logit, negative_logits], dim=1)
+            labels = torch.zeros(len(logits), dtype=torch.long, device=query.device)
+            
+            # calculate info loss
+            loss_nce = F.cross_entropy(logits / self.temperature, labels, reduction='mean')
+            
+            # 计算当前样本与负样本之间的余弦相似度并取负号
+            loss_neg = loss_neg + loss_nce
+
         # final loss
-        return loss_class + loss_bbox + loss_giou
+        return loss_class + loss_bbox + loss_giou + loss_nce
 
     @torch.no_grad()
     def _hungarian_matcher(self, outputs, targets):
         batch_size  = len(outputs)
         num_queries, num_class = next(iter(outputs))['logits'].shape
 
-        out_prob = torch.cat([v['logits'] for v in outputs])  # [batch_size * num_queries, num_classes]
+        # TODO modify here
+        # out_prob = torch.cat([v['logits'] for v in outputs])  # [batch_size * num_queries, num_classes
+        out_prob = torch.cat([v['logits'] for v in outputs]).softmax(-1)  # [batch_size * num_queries, num_classes]
         out_bbox = torch.cat([v['bboxes'] for v in outputs])  # [batch_size * num_queries, 4]
 
         tgt_ids  = torch.cat([v['labels'] for v in targets])
@@ -259,7 +316,8 @@ class DETRLoss(nn.Module):
         cost_bbox = self.coef_bbox * cost_bbox
 
         # compute giou cost between boxes
-        cost_giou = -generalized_box_iou(box_cxcywh_to_xyxy(out_bbox), box_cxcywh_to_xyxy(tgt_bbox))
+        cost_giou = -generalized_box_iou(_box_xywh_to_xyxy(out_bbox),
+                                         _box_xywh_to_xyxy(tgt_bbox))
         cost_giou = self.coef_giou + cost_giou
 
         # final cost matrix

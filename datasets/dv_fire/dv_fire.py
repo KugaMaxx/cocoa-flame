@@ -6,7 +6,6 @@ from numpy.lib.recfunctions import structured_to_unstructured
 import torch
 from torch.utils.data import Dataset
 
-from utils.plot import plot_projected_events, plot_detection_result
 from datasets.dataset import DatasetBase
 
 # TODO add some data augmentation methods
@@ -16,7 +15,7 @@ class DvFire(DatasetBase):
     def __init__(self, file_path: str, partition: str):
         super().__init__(file_path, partition)
         # parse xml dataset
-        xml_file = ET.parse(self.file_path / f"shuffled_{partition}.xml")
+        xml_file = ET.parse(self.file_path / f"annotations/{partition}.xml")
         xml_root = xml_file.getroot()
 
         # mapping category to index
@@ -39,7 +38,7 @@ class DvFire(DatasetBase):
         file_name = self.elements[index].get('name')
 
         # load aedat4 data
-        reader = kit.io.MonoCameraReader(str(self.file_path / f"{file_name}"))
+        reader = kit.io.MonoCameraReader(str(self.file_path / f"aedats/{file_name}"))
         data = reader.loadData()
         width, height = reader.getResolution("events")
 
@@ -54,7 +53,6 @@ class DvFire(DatasetBase):
             'file': file_name,
             'labels': torch.tensor([self.cat_ids[elem.get('label')]
                                    for elem in element.findall('box')]),
-                                   # todo: 改成 bboxes
             'bboxes': torch.tensor([[float(elem.get('xtl')) / width,
                                      float(elem.get('ytl')) / height,
                                      (float(elem.get('xbr')) - float(elem.get('xtl'))) / width,
