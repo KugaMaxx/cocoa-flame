@@ -20,7 +20,7 @@ def plot(data):
         "frames": torch.from_numpy(data['frames'].front().image) if not data['frames'].isEmpty() else None,
     }
 
-    model = flame_scout.init((346, 260))
+    model = flame_scout.init((346, 260), candidate_num=1)
     model.accept(data['events'])
 
     events = structured_to_unstructured(data['events'].numpy())
@@ -33,10 +33,10 @@ def plot(data):
     i = i + 1
 
 # load offline data
-reader = kit.io.MonoCameraReader(f"./tmp/Hybrid_02.aedat4")
+reader = kit.io.MonoCameraReader(f"/data/Ding/FlaDE/data/F01_c03/record.aedat4")
 data, resolution = reader.loadData(), reader.getResolution("events")
 
 # do every 33ms (cannot modify!)
 slicer = kit.MonoCameraSlicer()
-slicer.doEveryTimeInterval("events", timedelta(milliseconds=11), plot)
+slicer.doEveryTimeInterval("events", timedelta(milliseconds=33), plot)
 slicer.accept(data)
