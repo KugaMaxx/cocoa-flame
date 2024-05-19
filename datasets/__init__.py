@@ -2,7 +2,7 @@ import torch
 from torch.utils.data import DataLoader
 from torch.utils.data import RandomSampler, SequentialSampler, BatchSampler, DistributedSampler
 
-from .dv_fire.dv_fire import DvFire
+from .flade import FlaDE
 
 
 def collate_fn(batch):
@@ -15,7 +15,7 @@ def build_dataloader(args, partition):
         "Support partitions are ['test', 'train']"
 
     candidate_datasets = {
-        'dv_fire': DvFire
+        'flade': FlaDE
     }
 
     dataset = candidate_datasets[args.dataset_file](

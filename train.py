@@ -25,8 +25,8 @@ def parse_args():
 
     # dataset
     parser.add_argument('--num_workers', default=1, type=int)
-    parser.add_argument('--dataset_file', default='dv_fire')
-    parser.add_argument('--dataset_path', default='./datasets/dv_fire/', type=str)
+    parser.add_argument('--dataset_file', default='flade')
+    parser.add_argument('--dataset_path', default='/data/Ding/FlaDE/', type=str)
 
     # model
     parser.add_argument('--model_name', default='point_mlp', type=str)

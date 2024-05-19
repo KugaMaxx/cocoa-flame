@@ -1,17 +1,14 @@
+import torch
 import dv_toolkit as kit
 import xml.etree.ElementTree as ET
 
-from numpy.lib.recfunctions import structured_to_unstructured
-
-import torch
-from torch.utils.data import Dataset
-
 from datasets.dataset import DatasetBase
+from numpy.lib.recfunctions import structured_to_unstructured
 
 # TODO add some data augmentation methods
 
 
-class DvFire(DatasetBase):
+class FlaDE(DatasetBase):
     def __init__(self, file_path: str, partition: str):
         super().__init__(file_path, partition)
         # parse xml dataset
@@ -38,7 +35,7 @@ class DvFire(DatasetBase):
         file_name = self.elements[index].get('name')
 
         # load aedat4 data
-        reader = kit.io.MonoCameraReader(str(self.file_path / f"aedats/{file_name}"))
+        reader = kit.io.MonoCameraReader(str(self.file_path / f"{file_name}"))
         data = reader.loadData()
         width, height = reader.getResolution("events")
 
