@@ -9,13 +9,7 @@ from utils.misc import set_seed
 from utils.eval import Evaluator
 from datasets import build_dataloader
 
-import dv_processing as dv
-import dv_toolkit as kit
-
 from models.scout import flame_scout
-
-import alphashape
-from shapely.geometry import Polygon
 
 
 def parse_args():
@@ -194,29 +188,30 @@ if __name__ == '__main__':
                 'scores':torch.tensor([1.])
             })
 
-            if (target['labels'][0] == 0 and pred_cls != 0): fp = fp + 1
+            
 
-            # print(feats, pred_cls, target['file'])
-            # if (target['labels'][0] == 0 and pred_cls != 0):
-            #     fp = fp + 1
-            #     from utils.plot import plot_detection_result, plot_rescaled_image, plot_projected_events
-            #     image  = np.zeros((260, 346)) if sample['frames'] is None else sample['frames'].numpy()
-            #     events = np.zeros((1, 4))     if sample['events'] is None else sample['events'].numpy()
-            #     image = plot_projected_events(image, events)
-            #     image = plot_rescaled_image(image)
-            #     image = plot_detection_result(image, 
-            #                                 bboxes=(target['bboxes']).tolist(),
-            #                                 labels=(target['labels']).tolist(),
-            #                                 categories=data_loader_val.dataset.cat_ids,
-            #                                 colors=[(0, 0, 255)])
+            if (target['labels'][0] != 0 and pred_cls != 0):
+                fp = fp + 1
+                if fp>200:
+                    continue
+                from utils.plot import plot_detection_result, plot_rescaled_image, plot_projected_events
+                image  = np.zeros((260, 346)) if sample['frames'] is None else sample['frames'].numpy()
+                events = np.zeros((1, 4))     if sample['events'] is None else sample['events'].numpy()
+                image = plot_projected_events(image, events)
+                image = plot_rescaled_image(image)
+                image = plot_detection_result(image, 
+                                            bboxes=(target['bboxes']).tolist(),
+                                            labels=(target['labels']).tolist(),
+                                            categories=data_loader_val.dataset.cat_ids,
+                                            colors=[(0, 0, 255)])
                 
-            #     image = plot_detection_result(image, 
-            #                                 bboxes=outputs[-1]['bboxes'],
-            #                                 labels=outputs[-1]['labels'],
-            #                                 scores=outputs[-1]['scores'],
-            #                                 categories=data_loader_val.dataset.cat_ids,
-            #                                 colors=[(255, 0, 0)])
-            #     cv2.imwrite(f'./count_{fp:05d}.png', image)
+                image = plot_detection_result(image, 
+                                            bboxes=outputs[-1]['bboxes'],
+                                            labels=outputs[-1]['labels'],
+                                            scores=outputs[-1]['scores'],
+                                            categories=data_loader_val.dataset.cat_ids,
+                                            colors=[(255, 0, 0)])
+                cv2.imwrite(f'./detects/count_{fp:05d}.png', image)
 
         eval.update(outputs, targets)
 

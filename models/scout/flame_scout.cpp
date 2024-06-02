@@ -38,6 +38,7 @@ PYBIND11_MODULE(flame_scout, m) {
   py::class_<FlameScout>(m, "init")
       .def(py::init<const cv::Size &, float_t, size_t, float_t>(),
            "resolution"_a, "min_area"_a = 10.0, "candidate_num"_a = 5, "threshold"_a = 0.85)
-      .def("accept", &FlameScout::accept, "events"_a)
+      .def("accept", py::overload_cast<const kit::EventStorage &>(&FlameScout::accept), "events"_a)
+	  .def("accept", py::overload_cast<const py::array_t<int64_t> &>(&FlameScout::accept), "events"_a)
       .def("detect", &FlameScout::detect);
 }

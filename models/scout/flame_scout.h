@@ -31,7 +31,7 @@ public:
         candidate_num_(candidate_num),
         threshold_(threshold) {}
 
-  void accept(const EventStoreClass &store){
+  void accept(const EventStoreClass &store) {
     if (store.isEmpty()) {
       return;
     }
@@ -41,6 +41,17 @@ public:
 		}
 
     buffer_.add(store);
+  }
+
+  void accept(const py::array_t<int64_t> &array) {
+    for (size_t i = 0; i < array.request().shape[0]; i++) {
+      buffer_.emplace_back(
+        array.at(i, 0),
+        array.at(i, 1),
+        array.at(i, 2),
+        array.at(i, 3)
+      );
+    }
   }
 
   std::vector<py::array_t<float_t>> detect() {
